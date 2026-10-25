@@ -253,14 +253,15 @@
                 });
 
                 if (!response.ok) {
-                  throw new Error(`HTTP error! status: ${response.status}`);
+                  const errBody = await response.json().catch(() => ({}));
+                  throw new Error(errBody.error || `HTTP error! status: ${response.status}`);
                 }
 
                 const data = await response.json();
                 console.log('Response:', data); // Debug log
               } catch (error) {
                 console.error('Error uploading image:', error);
-                alert('Failed to upload image. Please try again.');
+                alert(`Failed to upload image: ${error.message}`);
               }
               //hideTypingIndicator();
 
@@ -376,47 +377,86 @@
       let currentAudio = null; // Track current audio element
 
       function playTextToSpeech(text) {
-        // Stop any currently playing audio
-        if (currentAudio) {
-          currentAudio.pause();
-          currentAudio.currentTime = 0;
+        // Detach the old audio first so its listeners (guarded by identity)
+        // cannot unmute the mic after we mute it for the new audio.
+        const old = currentAudio;
+        currentAudio = null;
+        if (old) {
+          old.pause();
+          old.currentTime = 0;
         }
 
-        currentAudio = new Audio(`/speech/${encodeURIComponent(text)}`);
-        
+        const audio = new Audio(`/speech/${encodeURIComponent(text)}`);
+        currentAudio = audio;
+        const isCurrent = () => audio === currentAudio;
+
         // Mute the mic while the bot speaks so it does not hear itself,
         // and turn it back on afterwards if it was on before.
         muteMic();
 
-        currentAudio.play().catch(error => {
-          console.error('Error playing audio:', error);
+        // Playback is over (or failed): forget the audio and hand the mic back
+        const release = () => {
+          if (!isCurrent()) return;
+          currentAudio = null;
           unmuteMic();
+        };
+
+        audio.play().catch(error => {
+          console.error('Error playing audio:', error);
+          release();
         });
 
-        currentAudio.addEventListener('ended', () => {
-          unmuteMic();
-          currentAudio = null; // Clear the reference when done
-        });
+        audio.addEventListener('ended', release);
+        audio.addEventListener('error', release);
+        audio.addEventListener('abort', release);
+
+        // A stalled stream should not leave the mic off; 'playing' mutes it again
+        audio.addEventListener('stalled', () => { if (isCurrent()) unmuteMic(); });
 
         // Pausing (spacebar) hands the mic back; resuming mutes it again
-        currentAudio.addEventListener('pause', unmuteMic);
-        currentAudio.addEventListener('play', muteMic);
+        audio.addEventListener('pause', () => { if (isCurrent()) unmuteMic(); });
+        audio.addEventListener('play', () => { if (isCurrent()) muteMic(); });
+        audio.addEventListener('playing', () => { if (isCurrent()) muteMic(); });
       }
 
       let resumeMicAfterAudio = false;
+      let micMuted = false;      // true while the bot's audio is playing
+      let startPending = false;  // start requested but 'start' callback not fired yet
+
+      function startListening() {
+        startPending = true;
+        try {
+          annyang.start({ autoRestart: true, continuous: true });
+        } catch (error) {
+          startPending = false;
+          console.error('Error starting recognition:', error);
+          status.textContent = 'Error starting recognition. Please try again.';
+        }
+      }
+
+      function stopListening() {
+        isListening = false;
+        startPending = false;
+        annyang.abort();
+        status.textContent = 'Click the microphone to start speaking';
+        micButton.style.backgroundColor = '#007bff';
+      }
 
       function muteMic() {
-        if (isListening) {
+        micMuted = true;
+        // Also covers the startup window where isListening is not yet true
+        if (isListening || startPending) {
           resumeMicAfterAudio = true;
-          micButton.click(); // stops recognition
+          stopListening();
         }
       }
 
       function unmuteMic() {
+        micMuted = false;
         if (resumeMicAfterAudio) {
           resumeMicAfterAudio = false;
-          if (!isListening) {
-            micButton.click(); // restarts recognition
+          if (!isListening && !startPending) {
+            startListening();
           }
         }
       }
@@ -470,6 +510,13 @@
       // Handle start event
       annyang.addCallback('start', function() {
         console.log('Recognition started');
+        startPending = false;
+        if (micMuted) {
+          // Started while the bot is speaking: switch off again, resume afterwards
+          resumeMicAfterAudio = true;
+          stopListening();
+          return;
+        }
         isListening = true;
         status.textContent = 'Listening...';
         micButton.style.backgroundColor = '#28a745';
@@ -491,6 +538,7 @@
       annyang.addCallback('error', function(err) {
         console.error('Recognition error:', err);
         isListening = false;
+        startPending = false;
         status.textContent = `Error: ${err.error}`;
         micButton.style.backgroundColor = '#007bff';
       });
@@ -504,20 +552,19 @@
       // Start/Stop recognition on button click
       micButton.addEventListener('click', () => {
         console.log('Button clicked, current state:', isListening);
-        if (isListening) {
+        if (isListening || startPending) {
           console.log('Stopping recognition');
-          isListening = false;
-          annyang.abort();
-          status.textContent = 'Click the microphone to start speaking';
-          micButton.style.backgroundColor = '#007bff';
+          resumeMicAfterAudio = false; // a manual stop must stay stopped
+          stopListening();
+        } else if (micMuted) {
+          // Bot is speaking: toggle whether the mic comes back when it finishes
+          resumeMicAfterAudio = !resumeMicAfterAudio;
+          status.textContent = resumeMicAfterAudio
+            ? 'Mic will turn on when the reply finishes'
+            : 'Click the microphone to start speaking';
         } else {
           console.log('Starting recognition');
-          try {
-            annyang.start({ autoRestart: true, continuous: true });
-          } catch (error) {
-            console.error('Error starting recognition:', error);
-            status.textContent = 'Error starting recognition. Please try again.';
-          }
+          startListening();
         }
       });
 

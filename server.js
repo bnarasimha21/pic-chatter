@@ -80,7 +80,13 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         };
 
         // Upload to DigitalOcean Spaces
-        const data = await s3.upload(params).promise();
+        let data;
+        try {
+            data = await s3.upload(params).promise();
+        } finally {
+            // Release the file descriptor whether the upload succeeded or failed
+            fileContent.destroy();
+        }
         
         // Clean up the temporary file
         fs.unlink(req.file.path, () => {});
@@ -96,6 +102,19 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         }
         res.status(500).json({ error: 'Error uploading image' });
     }
+});
+
+// Turn multer errors into JSON the client can parse
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        const tooBig = err.code === 'LIMIT_FILE_SIZE';
+        return res.status(tooBig ? 413 : 400).json({
+            error: tooBig ? 'Image is too large (5 MB maximum)' : `Upload error: ${err.message}`
+        });
+    }
+    if (res.headersSent) return next(err);
+    console.error('Unhandled error:', err);
+    res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start the server
