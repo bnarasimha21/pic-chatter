@@ -310,7 +310,7 @@
         try {
           console.log('Image File Name:', imageFileName);
           console.log('Text:', text);
-          apiUrl = API_CONFIG.endpoint + imageFileName + "/" + text;
+          const apiUrl = API_CONFIG.endpoint + encodeURIComponent(imageFileName) + "/" + encodeURIComponent(text);
           console.log('API URL:', apiUrl);
           
           if (!imageFileName) {
@@ -384,40 +384,41 @@
 
         currentAudio = new Audio(`/speech/${encodeURIComponent(text)}`);
         
-        // Start listening when audio starts
-        if (!isListening) {
-          micButton.click();
-        }
+        // Mute the mic while the bot speaks so it does not hear itself,
+        // and turn it back on afterwards if it was on before.
+        muteMic();
 
-        // Play the audio
         currentAudio.play().catch(error => {
           console.error('Error playing audio:', error);
-          // Reset mic button if audio fails to play
-          if (isListening) {
-            micButton.click();
-          }
+          unmuteMic();
         });
 
-        // Reset mic button when audio finishes playing
         currentAudio.addEventListener('ended', () => {
-          if (isListening) {
-            micButton.click();
-          }
+          unmuteMic();
           currentAudio = null; // Clear the reference when done
         });
 
-        // Add pause/resume functionality
-        currentAudio.addEventListener('pause', () => {
-          if (isListening) {
-            micButton.click();
-          }
-        });
+        // Pausing (spacebar) hands the mic back; resuming mutes it again
+        currentAudio.addEventListener('pause', unmuteMic);
+        currentAudio.addEventListener('play', muteMic);
+      }
 
-        currentAudio.addEventListener('play', () => {
+      let resumeMicAfterAudio = false;
+
+      function muteMic() {
+        if (isListening) {
+          resumeMicAfterAudio = true;
+          micButton.click(); // stops recognition
+        }
+      }
+
+      function unmuteMic() {
+        if (resumeMicAfterAudio) {
+          resumeMicAfterAudio = false;
           if (!isListening) {
-            micButton.click();
+            micButton.click(); // restarts recognition
           }
-        });
+        }
       }
 
       // Add spacebar event listener for pause/resume

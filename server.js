@@ -32,8 +32,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Route to render the EJS template
 app.get('/', (req, res) => {
     res.render('index', {
-        apiEndpoint: process.env.API_ENDPOINT || 'https://default-endpoint.com',
-        apiKey: process.env.API_KEY || 'default-api-key',
+        apiEndpoint: process.env.API_ENDPOINT || 'https://default-endpoint.com/',
     });
 });
 
@@ -48,7 +47,7 @@ app.get('/health', (req, res) => {
 });
 
 // Configure multer for file uploads
-const upload = multer({ dest: 'PicChatter/' });
+const upload = multer({ dest: 'PicChatter/', limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Endpoint to handle image upload
 app.post('/upload', upload.single('image'), async (req, res) => {
@@ -68,8 +67,8 @@ app.post('/upload', upload.single('image'), async (req, res) => {
             secretAccessKey: process.env.SPACES_SECRET,
         });
 
-        // Read the file content
-        const fileContent = fs.readFileSync(req.file.path);
+        // Stream the temp file instead of reading it all into memory
+        const fileContent = fs.createReadStream(req.file.path);
 
         // Prepare the upload parameters
         const params = {
@@ -84,7 +83,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         const data = await s3.upload(params).promise();
         
         // Clean up the temporary file
-        fs.unlinkSync(req.file.path);
+        fs.unlink(req.file.path, () => {});
 
         console.log('File uploaded successfully:', data.Location);
         res.json({ imageUrl: data.Location });
@@ -93,7 +92,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
         console.error('Error uploading file:', error);
         // Clean up the temporary file in case of error
         if (req.file && req.file.path) {
-            fs.unlinkSync(req.file.path);
+            fs.unlink(req.file.path, () => {});
         }
         res.status(500).json({ error: 'Error uploading image' });
     }
