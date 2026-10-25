@@ -375,12 +375,22 @@
 
       // Add text-to-speech function
       let currentAudio = null; // Track current audio element
+      let audioWatchdog = null; // interval that frees the mic if playback hangs
+      const AUDIO_STALL_MS = 8000;
+
+      function clearAudioWatchdog() {
+        if (audioWatchdog) {
+          clearInterval(audioWatchdog);
+          audioWatchdog = null;
+        }
+      }
 
       function playTextToSpeech(text) {
         // Detach the old audio first so its listeners (guarded by identity)
         // cannot unmute the mic after we mute it for the new audio.
         const old = currentAudio;
         currentAudio = null;
+        clearAudioWatchdog();
         if (old) {
           old.pause();
           old.currentTime = 0;
@@ -398,8 +408,40 @@
         const release = () => {
           if (!isCurrent()) return;
           currentAudio = null;
+          clearAudioWatchdog();
           unmuteMic();
         };
+
+        // Watchdog: a hung stream may never fire ended/error. If the clip is
+        // meant to be playing but currentTime has not moved for AUDIO_STALL_MS,
+        // take the same path as 'error' so the mic is restored.
+        let lastProgressAt = Date.now();
+        let lastTime = audio.currentTime;
+        const markProgress = () => {
+          lastProgressAt = Date.now();
+          lastTime = audio.currentTime;
+        };
+        audio.addEventListener('timeupdate', () => {
+          if (audio.currentTime !== lastTime) markProgress();
+        });
+        audio.addEventListener('play', markProgress);
+        audio.addEventListener('playing', markProgress);
+        clearAudioWatchdog();
+        audioWatchdog = setInterval(() => {
+          if (!isCurrent()) {
+            clearAudioWatchdog();
+            return;
+          }
+          // A user pause (spacebar) is not a stall; do not count it
+          if (audio.paused) {
+            markProgress();
+            return;
+          }
+          if (Date.now() - lastProgressAt >= AUDIO_STALL_MS) {
+            console.warn('Audio made no progress, releasing mic');
+            release();
+          }
+        }, 1000);
 
         audio.play().catch(error => {
           // A pause (spacebar) while play() is still pending rejects the promise
@@ -427,6 +469,7 @@
       let resumeMicAfterAudio = false;
       let micMuted = false;      // true while the bot's audio is playing
       let startPending = false;  // start requested but 'start' callback not fired yet
+      let abortedByMute = false; // our own muteMic abort; its async 'aborted' error is expected
 
       let startTimer = null;
       function clearStartTimer() {
@@ -476,6 +519,7 @@
         // Also covers the startup window where isListening is not yet true
         if (isListening || startPending) {
           resumeMicAfterAudio = true;
+          abortedByMute = true;
           stopListening();
         }
       }
@@ -545,6 +589,7 @@
       // Handle start event
       annyang.addCallback('start', function() {
         console.log('Recognition started');
+        abortedByMute = false;
         startPending = false;
         clearStartTimer();
         if (micMuted) {
@@ -572,6 +617,15 @@
 
       // Handle error event
       annyang.addCallback('error', function(err) {
+        if (abortedByMute) {
+          abortedByMute = false;
+          if (err && err.error === 'aborted') {
+            // Our own abort from muteMic: do not cancel a retry timer or
+            // pending start that unmuteMic may already have scheduled.
+            console.log('Ignoring aborted error from muteMic');
+            return;
+          }
+        }
         console.error('Recognition error:', err);
         isListening = false;
         startPending = false;
