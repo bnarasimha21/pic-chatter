@@ -402,6 +402,11 @@
         };
 
         audio.play().catch(error => {
+          // A pause (spacebar) while play() is still pending rejects the promise
+          // with AbortError. The audio is still ours and can be resumed, so keep it.
+          if (error && error.name === 'AbortError' && isCurrent() && audio.paused) {
+            return;
+          }
           console.error('Error playing audio:', error);
           release();
         });
@@ -410,8 +415,8 @@
         audio.addEventListener('error', release);
         audio.addEventListener('abort', release);
 
-        // A stalled stream should not leave the mic off; 'playing' mutes it again
-        audio.addEventListener('stalled', () => { if (isCurrent()) unmuteMic(); });
+        // No 'stalled' handler: buffered audio may still be playing while the
+        // network stalls, so the mic stays muted until ended/error/abort/pause.
 
         // Pausing (spacebar) hands the mic back; resuming mutes it again
         audio.addEventListener('pause', () => { if (isCurrent()) unmuteMic(); });
@@ -423,12 +428,35 @@
       let micMuted = false;      // true while the bot's audio is playing
       let startPending = false;  // start requested but 'start' callback not fired yet
 
-      function startListening() {
+      let startTimer = null;
+      function clearStartTimer() {
+        if (startTimer) {
+          clearTimeout(startTimer);
+          startTimer = null;
+        }
+      }
+
+      function startListening(isRetry) {
         startPending = true;
+        clearStartTimer();
+        // annyang can swallow a start() that follows a quick abort; if the
+        // 'start' callback never fires, clear the flag and retry once.
+        startTimer = setTimeout(() => {
+          startTimer = null;
+          if (!startPending) return;
+          startPending = false;
+          if (!isRetry && !micMuted && !isListening) {
+            startListening(true);
+          } else if (!isListening) {
+            status.textContent = 'Click the microphone to start speaking';
+            micButton.style.backgroundColor = '#007bff';
+          }
+        }, 1500);
         try {
           annyang.start({ autoRestart: true, continuous: true });
         } catch (error) {
           startPending = false;
+          clearStartTimer();
           console.error('Error starting recognition:', error);
           status.textContent = 'Error starting recognition. Please try again.';
         }
@@ -437,6 +465,7 @@
       function stopListening() {
         isListening = false;
         startPending = false;
+        clearStartTimer();
         annyang.abort();
         status.textContent = 'Click the microphone to start speaking';
         micButton.style.backgroundColor = '#007bff';
@@ -466,7 +495,13 @@
         if (event.code === 'Space' && currentAudio) {
           event.preventDefault(); // Prevent page scroll
           if (currentAudio.paused) {
-            currentAudio.play();
+            const resumed = currentAudio;
+            resumed.play().catch(error => {
+              // Interrupted resume (e.g. paused again): leave the audio in place
+              if (!error || error.name !== 'AbortError') {
+                console.error('Error resuming audio:', error);
+              }
+            });
           } else {
             currentAudio.pause();
           }
@@ -511,6 +546,7 @@
       annyang.addCallback('start', function() {
         console.log('Recognition started');
         startPending = false;
+        clearStartTimer();
         if (micMuted) {
           // Started while the bot is speaking: switch off again, resume afterwards
           resumeMicAfterAudio = true;
@@ -539,6 +575,7 @@
         console.error('Recognition error:', err);
         isListening = false;
         startPending = false;
+        clearStartTimer();
         status.textContent = `Error: ${err.error}`;
         micButton.style.backgroundColor = '#007bff';
       });
