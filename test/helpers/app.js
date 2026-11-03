@@ -5,10 +5,12 @@
 function startApp(appModulePath = '../../server') {
   process.env.VISION_PROVIDER = process.env.VISION_PROVIDER || 'fake';
   // eslint-disable-next-line global-require
-  const { app } = require(appModulePath);
+  const { app, perIpLimiter } = require(appModulePath);
   const server = app.listen(0);
   const { port } = server.address();
   return {
+    app,
+    perIpLimiter,
     server,
     port,
     baseUrl: `http://127.0.0.1:${port}`,
