@@ -59,17 +59,19 @@ async function main() {
   const sizes = values.sizes ? values.sizes.split(',').map((s) => Number(s.trim())) : [Number(process.env.IMAGE_MAX_DIM || 1092)];
   if (sizes.length > 1) {
     // Known limitation: every eval/images/*.png fixture is <=320px on its
-    // longest side (see eval/make_images.js), so no --sizes value at or
-    // above ~320 can show an actual size difference; every size in the
-    // comparison downscales to the same "already under the cap" no-op.
+    // longest side (see eval/make_images.js). A --sizes value AT OR ABOVE
+    // ~320 never downscales any fixture at all, so every such size comes
+    // out identical to every other; a size BELOW ~320 is the one that
+    // actually resizes (and therefore can differ from the others).
     // lib/imagePrep.js itself is fixed (issue 6) to read IMAGE_MAX_DIM
     // fresh per call rather than caching it at module load, which is what
     // let this comparison run multiple sizes in one process at all; a
-    // meaningful size *difference* in the output still needs a fixture
-    // larger than every size being compared (test/fixtures/large.jpg is
-    // one such image, used by test/imagePrep.test.js, but is not part of
-    // this hash-checked eval fixture set).
-    console.log('Note: current eval fixtures are all <=320px; a --sizes comparison below that will show identical results for every size. See eval/run.js.');
+    // meaningful size *difference* across the whole comparison still
+    // needs a fixture larger than every size being compared
+    // (test/fixtures/large.jpg is one such image, used by
+    // test/imagePrep.test.js, but is not part of this hash-checked eval
+    // fixture set).
+    console.log('Note: current eval fixtures are all <=320px; sizes below ~320 will resize (and can differ from each other), while sizes at or above ~320 all come out identical to the original. See eval/run.js.');
   }
 
   const runsBySize = [];
@@ -174,6 +176,7 @@ function printSummary(metrics, budgetResult) {
   console.log(`  abstention rate:        ${fmtPct(metrics.abstentionRate)}`);
   console.log(`  schema validity rate:   ${fmtPct(metrics.schemaValidityRate)}`);
   console.log(`  visible/no-probe agree: ${fmtPct(metrics.absentProbeVisibleAgreement)}`);
+  console.log(`  failed to get a reply: ${metrics.fallbackCount} of ${metrics.totalCases} (system fallback, not scored as correct/hallucinated/abstained)`);
   if (budgetResult) {
     console.log(`  p95 server time:        ${budgetResult.p95ServerMs.toFixed(1)}ms`);
     console.log(`  max tokens/answer:      ${budgetResult.maxTokensPerAnswer}`);
@@ -201,6 +204,7 @@ function writeReport({ provider, model, cases, runsBySize, budgetResult }) {
     md += `| Abstention rate (unanswerable) | ${fmtPct(run.metrics.abstentionRate)} |\n`;
     md += `| Schema validity rate | ${fmtPct(run.metrics.schemaValidityRate)} |\n`;
     md += `| visible=false / "no" agreement | ${fmtPct(run.metrics.absentProbeVisibleAgreement)} |\n`;
+    md += `| Failed to get a reply (system fallback) | ${run.metrics.fallbackCount} of ${run.metrics.totalCases} |\n`;
     const avgServerMs = run.samples.reduce((sum, s) => sum + s.serverMs, 0) / run.samples.length;
     const avgTokens = run.samples.reduce((sum, s) => sum + (s.totalTokens || 0), 0) / run.samples.length;
     md += `| Average server time | ${avgServerMs.toFixed(1)}ms |\n`;
