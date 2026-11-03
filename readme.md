@@ -96,6 +96,24 @@ separate browser job runs the Playwright tests on Node 22.
   given; a direct API call that skips this page entirely has no client
   consent record, so the server's own check is the only thing that gates
   storage in that case, not anything the client claims.
+- The server also checks that the request's `consentFingerprint` field
+  matches the server's own current fingerprint (provider, storage on/off,
+  retention window), not just the bare `consent` flag: a browser tab left
+  open from before the server config changed would otherwise keep sending
+  `consent: true` under a fingerprint the operator-facing notice never
+  actually showed. A mismatch is treated the same as no consent at all for
+  storage purposes.
+  - This fingerprint check only ever gated storage, by design, the same
+    as the bare `consent` flag above: the vision call itself (answering
+    the question about the photo) is this app's core function and always
+    runs regardless of consent or fingerprint match, once a photo has been
+    captured client-side. A tab that is stale with respect to a provider
+    swap will keep sending photos to the new provider without the page
+    re-showing the notice until it is reloaded; it will simply never get
+    its photo stored while stale. Gating the vision call itself on a fresh
+    fingerprint match would be a larger behavior change than this fix's
+    scope (closing the storage-consent gap), and was left out rather than
+    folded in silently.
 - Image storage is off by default (`STORE_IMAGES=false`). When turned on,
   `lib/storage.js` uploads to a DigitalOcean Spaces / S3-compatible bucket
   under a random key, with no public ACL, and only after the vision call
@@ -114,6 +132,18 @@ separate browser job runs the Playwright tests on Node 22.
   window if the process is down the entire time; it is a guarantee that it
   is deleted as soon as the process is next running, plus a same-day
   backstop if it is not.
+  - Known limitation: every key this app writes lives under the
+    `pic-chatter/` prefix, and the startup sweep and lifecycle rule are
+    both scoped to that prefix so neither can ever touch objects this app
+    did not write on a bucket shared with anything else. Any object
+    written by an older version of this app before that prefix existed
+    (a bare `<uuid>.jpg` at the bucket root) is outside that scope and
+    will not be found by the sweep or covered by the lifecycle rule; it
+    would need a one-time manual cleanup on any bucket that had
+    `STORE_IMAGES=true` before this prefix was introduced. No such bucket
+    exists yet as of this fix, so no cleanup was performed, but this must
+    be checked before relying on the prefix-scoped sweep on an
+    already-populated bucket.
 - Per-IP rate limiting (`express-rate-limit`) and a rolling-window daily
   call cap (`lib/rateLimit.js`) protect the real vision provider from
   abuse; both are env-configured, not hardcoded.

@@ -6,6 +6,7 @@ const sharp = require('sharp');
 
 const vision = require('./lib/vision');
 const storage = require('./lib/storage');
+const consent = require('./public/js/consent');
 const { createTimer } = require('./lib/timing');
 const { downscaleIfNeeded } = require('./lib/imagePrep');
 const { checkFrame } = require('./lib/frameCheck');
@@ -115,7 +116,23 @@ app.post(
     // only gates the browser's own UI. A direct POST to /ask (curl, a
     // script, a replayed request) never touches that UI, so without this
     // check it would bypass consent entirely whenever storage is on.
-    const consentGiven = (req.body.consent || '').toString().trim() === 'true';
+    //
+    // A bare "true" is not enough on its own: the client's consent notice
+    // was built from a fingerprint of the server's config (provider,
+    // whether storage is on, retention minutes) at the moment it was
+    // accepted. A browser tab left open from before an operator switches
+    // storage on, or swaps provider, still has consent=true in its own
+    // stale closure, and would otherwise keep bypassing a notice it never
+    // actually saw. Recomputing the server's own current fingerprint here
+    // and requiring an exact match closes that gap; a mismatch is treated
+    // the same as no consent at all, never as a partial/weaker consent.
+    const consentBooleanGiven = (req.body.consent || '').toString().trim() === 'true';
+    const expectedConsentFingerprint = consent.buildFingerprint({
+      provider: vision.resolveProviderName(),
+      storeImages: storage.isEnabled(),
+      retentionMinutes: storage.getRetentionMinutes()
+    });
+    const consentGiven = consentBooleanGiven && (req.body.consentFingerprint || '') === expectedConsentFingerprint;
 
     // The declared Content-Type can lie (a text file renamed to .jpg); the
     // real format comes from sniffing the bytes. This detected format, not
@@ -177,7 +194,7 @@ app.post(
         timer.mark('provider_first_byte');
         timer.mark('provider_done');
         status = 502;
-        logAskRequest({ sizeBytes: req.file.size, mime: req.file.mimetype, durationMs: timer.mark('response_sent'), status, provider: vision.resolveProviderName() });
+        logAskRequest({ sizeBytes: req.file.size, mime: detectedMime, durationMs: timer.mark('response_sent'), status, provider: vision.resolveProviderName() });
         return res.status(502).json({ error: 'The vision provider failed to answer. Please try again.' });
       }
 
@@ -204,7 +221,7 @@ app.post(
       // skips the browser's consent UI entirely no longer gets stored.
       if (schemaValid && consentGiven && storage.isEnabled() && !controller.signal.aborted) {
         try {
-          const stored = await storage.maybeStore({ buffer: prep.buffer, mime: prep.mime });
+          const stored = await storage.maybeStore({ buffer: prep.buffer, mime: prep.mime, signal: controller.signal });
           if (stored) {
             storedImage = { url: stored.url, expiresAt: stored.expiresAt };
           }
@@ -237,7 +254,7 @@ app.post(
     res.set('Server-Timing', timer.toServerTimingHeader());
     logAskRequest({
       sizeBytes: req.file.size,
-      mime: req.file.mimetype,
+      mime: detectedMime,
       durationMs: timer.toJSON().response_sent,
       status,
       provider: providerName

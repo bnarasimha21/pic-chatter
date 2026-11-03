@@ -192,16 +192,42 @@
       // matches, so the notice is shown again instead of silently carrying
       // over consent given to a different setup.
       const consentFingerprint = Consent.buildFingerprint({
-        provider: '<%= visionProvider %>',
+        // JSON.stringify, not plain HTML-escaped interpolation: this value
+        // lands inside a JS string literal, not HTML text, so a provider
+        // name containing a quote or backslash would otherwise either
+        // break the script or (with HTML-escaping alone) produce a
+        // fingerprint string that can never match the one the server
+        // computes from the raw name, silently disabling storage.
+        provider: <%- JSON.stringify(visionProvider) %>,
         storeImages: <%= storeImages ? 'true' : 'false' %>,
         retentionMinutes: <%= Number(retentionMinutes) || 0 %>
       });
 
       let uiState = PicChatterState.INITIAL_STATE;
       let currentImageBlob = null;
+      let currentImagePreviewUrl = null;
       let currentController = null;
       let recognition = null;
       let currentUtterance = null;
+      // Bumped every time consent is withdrawn, and read by startCamera()
+      // right after its getUserMedia() promise resolves. getUserMedia is
+      // async and can resolve well after a withdraw click (the permission
+      // prompt itself can sit open for seconds), so stopCameraTracks()
+      // alone - which only stops tracks on a stream already assigned to
+      // cameraPreview.srcObject - misses a stream that is still in flight
+      // at the moment consent is withdrawn.
+      //
+      // A plain boolean flag is not enough here: withdraw -> re-consent
+      // while the original getUserMedia() call is still pending would
+      // reset a boolean back to "not withdrawn" before that stale call
+      // resolves, so its now-obsolete stream would still land on the
+      // video element and silently replace (without stopping) the stream
+      // from the new, current startCamera() call. A generation counter
+      // instead lets each call compare the value it captured when it
+      // started against the current value, so only the most recent call
+      // ever wins, regardless of how the withdraw/re-consent clicks and
+      // the getUserMedia() resolutions end up interleaved.
+      let cameraGeneration = 0;
 
       function dispatch(actionType) {
         uiState = PicChatterState.reduce(uiState, { type: actionType });
@@ -256,6 +282,21 @@
         cameraPreview.srcObject = null;
       }
 
+      // Clears the captured frame along with the camera feed on withdrawal.
+      // Without this, a photo captured before consent was withdrawn stays
+      // in currentImageBlob and capturedPreview, so re-consenting without
+      // taking a fresh picture would still let that stale photo be asked
+      // about and (if storage is on) uploaded.
+      function clearCapturedImage() {
+        currentImageBlob = null;
+        if (currentImagePreviewUrl) {
+          URL.revokeObjectURL(currentImagePreviewUrl);
+          currentImagePreviewUrl = null;
+        }
+        capturedPreview.removeAttribute('src');
+        capturedPreview.style.display = 'none';
+      }
+
       if (hasConsent()) {
         showApp();
       } else {
@@ -273,11 +314,17 @@
 
       // --- Withdraw consent: stop everything and re-show the notice ---
       withdrawConsentButton.addEventListener('click', () => {
+        // Invalidates any startCamera() call already in flight (its
+        // captured generation can never match this new value), so a
+        // stream granted after this point can never land on the page,
+        // no matter how it interleaves with a later re-consent.
+        cameraGeneration++;
         if (currentController) currentController.abort();
         if (recognition && uiState === 'listening') recognition.stop();
         if ('speechSynthesis' in window) window.speechSynthesis.cancel();
         currentUtterance = null;
         stopCameraTracks();
+        clearCapturedImage();
         Consent.clearConsent(window.localStorage);
         appEl.classList.add('hidden');
         consentOverlay.classList.remove('hidden');
@@ -286,8 +333,19 @@
 
       // --- Camera capture ---
       async function startCamera() {
+        const myGeneration = cameraGeneration;
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          // Consent can be withdrawn (or withdrawn and re-granted) while
+          // this permission prompt/request is still pending; comparing
+          // the generation captured above against the current one, right
+          // here, is what stops a stream granted after that from ever
+          // reaching the page, and stops it from silently clobbering a
+          // newer call's stream without stopping it.
+          if (myGeneration !== cameraGeneration) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
           cameraPreview.srcObject = stream;
         } catch (err) {
           console.error('Could not start camera:', err);
@@ -296,11 +354,21 @@
       }
 
       captureButton.addEventListener('click', () => {
+        const myGeneration = cameraGeneration;
         const ctx = captureCanvas.getContext('2d');
         ctx.drawImage(cameraPreview, 0, 0, captureCanvas.width, captureCanvas.height);
         captureCanvas.toBlob((blob) => {
+          // toBlob's callback fires asynchronously, so a capture clicked
+          // immediately before a withdraw can otherwise land after
+          // clearCapturedImage() has already run, leaving a stale image
+          // in place right after withdrawal. Checking the generation
+          // here, the same way startCamera() does, discards a capture
+          // that belongs to a session consent has since withdrawn from.
+          if (myGeneration !== cameraGeneration) return;
           currentImageBlob = blob;
-          capturedPreview.src = URL.createObjectURL(blob);
+          if (currentImagePreviewUrl) URL.revokeObjectURL(currentImagePreviewUrl);
+          currentImagePreviewUrl = URL.createObjectURL(blob);
+          capturedPreview.src = currentImagePreviewUrl;
           capturedPreview.style.display = 'block';
         }, 'image/jpeg', 0.85);
       });
@@ -380,7 +448,8 @@
             'capture.jpg',
             question,
             currentController.signal,
-            true
+            true,
+            consentFingerprint
           );
 
           if (status !== 200 || !body || !body.answer) {
