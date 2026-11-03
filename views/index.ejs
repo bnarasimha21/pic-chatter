@@ -3,674 +3,540 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice Chatbot</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/annyang/2.6.1/annyang.min.js"></script>
+  <title>PicChatter</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      text-align: center;
-      margin: 20px;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      max-width: 800px;
+      margin: 0;
+      padding: 20px;
+      max-width: 700px;
       margin: 0 auto;
-      padding: 20px;
-      overflow: hidden; /* Prevent body scroll */
     }
-    .chat-container {
-      flex-grow: 1;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      margin-bottom: 20px;
-      display: flex;
-      flex-direction: column;
-      background: #f5f5f5;
-      overflow: hidden; /* Prevent container scroll */
-      position: relative; /* For absolute positioning of controls */
-    }
-    .chat-messages {
-      flex-grow: 1;
-      overflow-y: auto;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      scroll-behavior: smooth; /* Smooth scrolling */
-      padding-bottom: 80px; /* Space for controls */
-    }
-    .message {
-      max-width: 70%;
-      padding: 10px 15px;
-      border-radius: 15px;
-      margin: 5px 0;
-    }
-    .user-message {
-      background-color: #007bff;
-      color: white;
-      align-self: flex-end;
-    }
-    .bot-message {
-      background-color: #e9ecef;
-      color: black;
-      align-self: flex-start;
-    }
-    .controls {
-      display: flex;
-      gap: 10px;
-      padding: 10px;
-      background: white;
-      border-top: 1px solid #ccc;
-      align-items: center;
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      z-index: 10;
-    }
-    .microphone {
-      background-color: #007bff;
-      color: white;
-      border: none;
-      border-radius: 50%;
-      width: 50px;
-      height: 50px;
-      font-size: 20px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .microphone:active {
-      background-color: #0056b3;
-    }
+    h1 { text-align: center; }
     .status {
       font-size: 14px;
       color: #555;
+      text-align: center;
       margin-bottom: 10px;
     }
-    .typing-indicator {
-      display: none;
-      align-self: flex-start;
-      background-color: #e9ecef;
-      padding: 10px 15px;
-      border-radius: 15px;
-      color: #666;
-    }
-    .image-upload {
-      display: none;
-    }
-    .image-upload-label {
-      background-color: #28a745;
-      color: white;
-      padding: 8px 15px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    .image-upload-label:hover {
-      background-color: #218838;
-    }
-    .uploaded-image {
-      max-width: 200px;
-      max-height: 200px;
-      margin: 10px 0;
-      border-radius: 5px;
-    }
-    .image-preview {
-      display: none;
-      margin: 10px 0;
-    }
-    .clear-image {
-      background-color: #dc3545;
-      color: white;
-      border: none;
-      padding: 5px 10px;
-      border-radius: 3px;
-      cursor: pointer;
-      margin-left: 10px;
+    .provider-note {
       font-size: 12px;
+      color: #888;
+      text-align: center;
+      margin-bottom: 10px;
     }
-    .message-with-image {
+    #consentOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    #consentOverlay.hidden { display: none; }
+    .consent-box {
+      background: white;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 420px;
+      text-align: left;
+    }
+    .consent-box h2 { margin-top: 0; }
+    .consent-box .consent-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    #app.hidden { display: none; }
+    .camera-wrap {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      align-items: center;
+      gap: 10px;
     }
-    .message-with-image img {
-      margin-top: 10px;
-      border-radius: 5px;
+    video, canvas, #capturedPreview {
+      max-width: 100%;
+      border-radius: 6px;
+      background: #000;
     }
+    canvas { display: none; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin: 14px 0;
+    }
+    button {
+      border: none;
+      border-radius: 6px;
+      padding: 10px 16px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    #micButton { background: #007bff; color: white; }
+    #micButton.listening { background: #28a745; }
+    #captureButton { background: #6f42c1; color: white; }
+    #stopButton { background: #dc3545; color: white; }
+    #stopButton:disabled { background: #ccc; cursor: not-allowed; }
+    .text-fallback {
+      display: flex;
+      gap: 8px;
+      margin: 10px 0;
+    }
+    .text-fallback input {
+      flex-grow: 1;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    .chat-log {
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 12px;
+      min-height: 120px;
+      max-height: 300px;
+      overflow-y: auto;
+      background: #f8f9fa;
+    }
+    .message { margin: 6px 0; padding: 8px 12px; border-radius: 10px; }
+    .message.user { background: #007bff; color: white; }
+    .message.bot { background: #e9ecef; }
   </style>
 </head>
 <body>
   <h1>PicChatter</h1>
-  <div class="status" id="status">Click the microphone to start speaking</div>
-  
-  <div class="chat-container">
-    <div class="chat-messages" id="chatMessages">
-      <div class="message bot-message">Hello! How can I help you today? You can speak or upload an image for me to analyze.</div>
-    </div>
-    <div class="typing-indicator" id="typingIndicator">Bot is thinking...</div>
-    <div class="controls">
-      <button class="microphone" id="micButton">🎤</button>
-      <label class="image-upload-label" for="imageUpload">📷 Upload Image</label>
-      <input type="file" id="imageUpload" class="image-upload" name="image" accept="image/*">
+  <div class="provider-note">Vision provider: <%= visionProvider %></div>
+  <div class="status" id="status">Loading...</div>
+
+  <!-- CONSENT GATE: camera/mic never start until this is accepted -->
+  <div id="consentOverlay">
+    <div class="consent-box">
+      <h2>Before we start</h2>
+      <p>
+        PicChatter sends the picture you capture, and the question you ask
+        about it, to <strong><%= visionProvider %></strong> so it can
+        answer.
+      </p>
+      <p>
+        <% if (storeImages) { %>
+          Image storage is currently <strong>on</strong> for this server:
+          the picture is kept for about <strong><%= retentionMinutes %>
+          minute<%= retentionMinutes === 1 ? '' : 's' %></strong> and then
+          deleted. See the readme for exactly what that deletion does and
+          does not guarantee.
+        <% } else { %>
+          Image storage is currently <strong>off</strong> for this server:
+          the picture goes to the vision provider and is not saved
+          anywhere by this app.
+        <% } %>
+        Nothing is sent until you capture a picture and ask a question.
+      </p>
+      <div class="consent-actions">
+        <button id="consentAccept">I understand, continue</button>
+        <button id="consentDecline" style="background:#aaa;color:white;">No thanks</button>
+      </div>
     </div>
   </div>
 
+  <div id="app" class="hidden">
+    <div class="camera-wrap">
+      <video id="cameraPreview" autoplay playsinline muted width="480" height="360"></video>
+      <canvas id="captureCanvas" width="480" height="360"></canvas>
+      <img id="capturedPreview" alt="Last captured frame" style="display:none;" width="240" />
+    </div>
+
+    <div class="controls">
+      <button id="captureButton">Capture picture</button>
+      <button id="micButton" style="display:none;">Ask by voice</button>
+      <button id="stopButton" disabled>Stop</button>
+      <button id="withdrawConsentButton" style="background:#aaa;color:white;">Withdraw consent</button>
+    </div>
+
+    <form class="text-fallback" id="textForm">
+      <input type="text" id="textQuestion" placeholder="Type your question about the captured picture" maxlength="300" />
+      <button type="submit" id="textSubmit">Ask</button>
+    </form>
+
+    <div class="chat-log" id="chatLog"></div>
+  </div>
+
+  <script src="/public/js/consent.js"></script>
+  <script src="/public/js/state.js"></script>
+  <script src="/public/js/askClient.js"></script>
   <script>
-    console.log('Checking for annyang...', !!window.annyang);
+    (function () {
+      'use strict';
 
-    if (annyang) {
-      console.log('Annyang is available');
-      
-      // Get UI elements
+      const statusEl = document.getElementById('status');
+      const consentOverlay = document.getElementById('consentOverlay');
+      const consentAccept = document.getElementById('consentAccept');
+      const consentDecline = document.getElementById('consentDecline');
+      const appEl = document.getElementById('app');
+      const cameraPreview = document.getElementById('cameraPreview');
+      const captureCanvas = document.getElementById('captureCanvas');
+      const capturedPreview = document.getElementById('capturedPreview');
+      const captureButton = document.getElementById('captureButton');
       const micButton = document.getElementById('micButton');
-      const status = document.getElementById('status');
-      const chatMessages = document.getElementById('chatMessages');
-      const typingIndicator = document.getElementById('typingIndicator');
-      let isListening = false;
-      let currentImageData = null;
-      let imageFileName = null;
+      const stopButton = document.getElementById('stopButton');
+      const textForm = document.getElementById('textForm');
+      const textQuestion = document.getElementById('textQuestion');
+      const chatLog = document.getElementById('chatLog');
+      const withdrawConsentButton = document.getElementById('withdrawConsentButton');
 
-      // Simple responses for the chatbot
-      const botResponses = {
-        'hello': ['Hi there!', 'Hello!', 'Hey! How can I help?'],
-        'how are you': ["I'm doing great, thanks for asking!", "I'm well, how are you?"],
-        'what is your name': ["I'm ChatBot, nice to meet you!", "You can call me ChatBot!"],
-        'goodbye': ['Goodbye!', 'See you later!', 'Have a great day!'],
-        'default': ['Interesting! Tell me more.', 'I see. Please continue.', 'I understand. What else would you like to discuss?']
-      };
+      // Built from the server-rendered facts the consent notice actually
+      // showed, so a stored consent only counts for exactly those facts.
+      // If the server config changes (provider swapped, storage toggled),
+      // this fingerprint changes too and the stored consent no longer
+      // matches, so the notice is shown again instead of silently carrying
+      // over consent given to a different setup.
+      const consentFingerprint = Consent.buildFingerprint({
+        // JSON.stringify, not plain HTML-escaped interpolation: this value
+        // lands inside a JS string literal, not HTML text, so a provider
+        // name containing a quote or backslash would otherwise either
+        // break the script or (with HTML-escaping alone) produce a
+        // fingerprint string that can never match the one the server
+        // computes from the raw name, silently disabling storage.
+        provider: <%- JSON.stringify(visionProvider) %>,
+        storeImages: <%= storeImages ? 'true' : 'false' %>,
+        retentionMinutes: <%= Number(retentionMinutes) || 0 %>
+      });
 
-      // Add API configuration
-      const API_CONFIG = {
-        endpoint: '<%= apiEndpoint %>',  // Replace with your actual API endpoint
-      };
+      let uiState = PicChatterState.INITIAL_STATE;
+      let currentImageBlob = null;
+      let currentImagePreviewUrl = null;
+      let currentController = null;
+      let recognition = null;
+      let currentUtterance = null;
+      // Bumped every time consent is withdrawn, and read by startCamera()
+      // right after its getUserMedia() promise resolves. getUserMedia is
+      // async and can resolve well after a withdraw click (the permission
+      // prompt itself can sit open for seconds), so stopCameraTracks()
+      // alone - which only stops tracks on a stream already assigned to
+      // cameraPreview.srcObject - misses a stream that is still in flight
+      // at the moment consent is withdrawn.
+      //
+      // A plain boolean flag is not enough here: withdraw -> re-consent
+      // while the original getUserMedia() call is still pending would
+      // reset a boolean back to "not withdrawn" before that stale call
+      // resolves, so its now-obsolete stream would still land on the
+      // video element and silently replace (without stopping) the stream
+      // from the new, current startCamera() call. A generation counter
+      // instead lets each call compare the value it captured when it
+      // started against the current value, so only the most recent call
+      // ever wins, regardless of how the withdraw/re-consent clicks and
+      // the getUserMedia() resolutions end up interleaved.
+      let cameraGeneration = 0;
 
-      function setupImageUpload() {
-        const imageUpload = document.getElementById('imageUpload');
-        const imagePreview = document.getElementById('imagePreview');
+      function dispatch(actionType) {
+        uiState = PicChatterState.reduce(uiState, { type: actionType });
+        render();
+      }
 
-        console.log('Setting up image upload...', imageUpload); // Debug log
+      function render() {
+        statusEl.textContent = {
+          idle: 'Capture a picture, then ask a question.',
+          listening: 'Listening...',
+          asking: 'Thinking...',
+          speaking: 'Speaking the answer...',
+          error: 'Something went wrong. Try again.'
+        }[uiState] || uiState;
 
-        if (!imageUpload) {
-          console.error('Image upload element not found!');
+        micButton.classList.toggle('listening', uiState === 'listening');
+        stopButton.disabled = uiState === 'idle';
+        micButton.disabled = uiState === 'asking' || uiState === 'speaking';
+        textQuestion.disabled = uiState === 'asking' || uiState === 'speaking';
+      }
+
+      function addMessage(text, isUser) {
+        const div = document.createElement('div');
+        div.className = `message ${isUser ? 'user' : 'bot'}`;
+        div.textContent = text;
+        chatLog.appendChild(div);
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      // --- Consent gate ---
+      function hasConsent() {
+        try {
+          return Consent.hasConsented(window.localStorage, consentFingerprint);
+        } catch (err) {
+          return false;
+        }
+      }
+
+      function showApp() {
+        consentOverlay.classList.add('hidden');
+        appEl.classList.remove('hidden');
+        startCamera();
+        setupSpeechRecognition();
+        render();
+      }
+
+      function stopCameraTracks() {
+        const stream = cameraPreview.srcObject;
+        if (stream && typeof stream.getTracks === 'function') {
+          stream.getTracks().forEach((track) => track.stop());
+        }
+        cameraPreview.srcObject = null;
+      }
+
+      // Clears the captured frame along with the camera feed on withdrawal.
+      // Without this, a photo captured before consent was withdrawn stays
+      // in currentImageBlob and capturedPreview, so re-consenting without
+      // taking a fresh picture would still let that stale photo be asked
+      // about and (if storage is on) uploaded.
+      function clearCapturedImage() {
+        currentImageBlob = null;
+        if (currentImagePreviewUrl) {
+          URL.revokeObjectURL(currentImagePreviewUrl);
+          currentImagePreviewUrl = null;
+        }
+        capturedPreview.removeAttribute('src');
+        capturedPreview.style.display = 'none';
+      }
+
+      if (hasConsent()) {
+        showApp();
+      } else {
+        render();
+      }
+
+      consentAccept.addEventListener('click', () => {
+        Consent.recordConsent(window.localStorage, consentFingerprint);
+        showApp();
+      });
+
+      consentDecline.addEventListener('click', () => {
+        statusEl.textContent = 'Camera and microphone access are needed to use PicChatter.';
+      });
+
+      // --- Withdraw consent: stop everything and re-show the notice ---
+      withdrawConsentButton.addEventListener('click', () => {
+        // Invalidates any startCamera() call already in flight (its
+        // captured generation can never match this new value), so a
+        // stream granted after this point can never land on the page,
+        // no matter how it interleaves with a later re-consent.
+        cameraGeneration++;
+        if (currentController) currentController.abort();
+        if (recognition && uiState === 'listening') recognition.abort();
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        currentUtterance = null;
+        stopCameraTracks();
+        clearCapturedImage();
+        Consent.clearConsent(window.localStorage);
+        appEl.classList.add('hidden');
+        consentOverlay.classList.remove('hidden');
+        dispatch('STOP');
+      });
+
+      // --- Camera capture ---
+      async function startCamera() {
+        const myGeneration = cameraGeneration;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          // Consent can be withdrawn (or withdrawn and re-granted) while
+          // this permission prompt/request is still pending; comparing
+          // the generation captured above against the current one, right
+          // here, is what stops a stream granted after that from ever
+          // reaching the page, and stops it from silently clobbering a
+          // newer call's stream without stopping it.
+          if (myGeneration !== cameraGeneration) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          cameraPreview.srcObject = stream;
+        } catch (err) {
+          console.error('Could not start camera:', err);
+          statusEl.textContent = 'Could not access the camera. You can still type a question once you have an image another way.';
+        }
+      }
+
+      captureButton.addEventListener('click', () => {
+        const myGeneration = cameraGeneration;
+        const ctx = captureCanvas.getContext('2d');
+        ctx.drawImage(cameraPreview, 0, 0, captureCanvas.width, captureCanvas.height);
+        captureCanvas.toBlob((blob) => {
+          // toBlob's callback fires asynchronously, so a capture clicked
+          // immediately before a withdraw can otherwise land after
+          // clearCapturedImage() has already run, leaving a stale image
+          // in place right after withdrawal. Checking the generation
+          // here, the same way startCamera() does, discards a capture
+          // that belongs to a session consent has since withdrawn from.
+          if (myGeneration !== cameraGeneration) return;
+          currentImageBlob = blob;
+          if (currentImagePreviewUrl) URL.revokeObjectURL(currentImagePreviewUrl);
+          currentImagePreviewUrl = URL.createObjectURL(blob);
+          capturedPreview.src = currentImagePreviewUrl;
+          capturedPreview.style.display = 'block';
+        }, 'image/jpeg', 0.85);
+      });
+
+      // --- Speech recognition, with a text-input fallback when unsupported ---
+      function setupSpeechRecognition() {
+        const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognitionImpl) {
+          micButton.style.display = 'none';
           return;
         }
 
-        // Remove any existing listeners first
-        const newImageUpload = imageUpload.cloneNode(true);
-        imageUpload.parentNode.replaceChild(newImageUpload, imageUpload);
+        micButton.style.display = 'inline-block';
+        recognition = new SpeechRecognitionImpl();
+        recognition.lang = 'en-US';
+        recognition.continuous = false;
+        recognition.interimResults = false;
 
-        // Add the event listener
-        newImageUpload.addEventListener('change', async (e) => {
-          console.log('File input change event triggered'); // Debug log
-          console.log('Files:', e.target.files); // Debug log
-
-          const file = e.target.files[0];
-          console.log('File:', file); // Debug log
-
-          if (file) {
-            console.log('File selected:', file.name, file.type, file.size); // Debug log
-            
-            // Check file size (limit to 5MB)
-            if (file.size > 5 * 1024 * 1024) {
-              alert('Please select an image smaller than 5MB');
-              return;
-            }
-
-            // Check file type
-            if (!file.type.startsWith('image/')) {
-              alert('Please select a valid image file');
-              return;
-            }
-            
-            try {
-              console.log('Converting image to base64...'); // Debug log
-              const imageUrl = URL.createObjectURL(file);
-              imageFileName = file.name;
-
-              currentImageData = imageUrl;
-              
-              // Automatically ask for image description
-              userMessage = ""
-              addMessage(userMessage, true, imageUrl);
-              //showTypingIndicator();
-
-              //Upload image to spaces
-              console.log('Uploading to spaces...');
-
-              // Create FormData and append the file
-              const formData = new FormData();
-              formData.append('image', file); // 'image' should match the field name expected by multer
-              
-              console.log('Uploading file:', file.name); // Debug log
-
-              try {
-                const response = await fetch('/upload', {
-                  method: 'POST',
-                  body: formData // Send FormData directly, don't stringify it
-                });
-
-                if (!response.ok) {
-                  const errBody = await response.json().catch(() => ({}));
-                  throw new Error(errBody.error || `HTTP error! status: ${response.status}`);
-                }
-
-                const data = await response.json();
-                console.log('Response:', data); // Debug log
-              } catch (error) {
-                console.error('Error uploading image:', error);
-                alert(`Failed to upload image: ${error.message}`);
-              }
-              //hideTypingIndicator();
-
-            } catch (error) {
-              console.error('Error processing image:', error);
-              alert('Error processing image. Please try again.');
-            }
-          }
+        recognition.addEventListener('result', (event) => {
+          // Defense in depth: real Chrome's SpeechRecognition can deliver a
+          // trailing 'result' event even after .abort() is called (the
+          // engine may already have a result in flight at the moment
+          // abort() is invoked). The app's own state is the source of
+          // truth for whether the user is still actually listening; if
+          // it is not 'listening' anymore (Stop was pressed, or a listen
+          // session already ended for any other reason), this result
+          // belongs to a session the user has already asked to cancel and
+          // must be discarded rather than turned into a captured photo
+          // being sent to the vision provider (and possibly stored)
+          // without the user's consent to that specific submission.
+          if (uiState !== 'listening') return;
+          const transcript = event.results[0][0].transcript;
+          dispatch('SPEECH_RESULT');
+          askQuestion(transcript);
         });
 
-        // Add click event listener to the label to ensure it's working
-        const imageUploadLabel = document.querySelector('.image-upload-label');
-        if (imageUploadLabel) {
-          imageUploadLabel.addEventListener('click', () => {
-            console.log('Upload label clicked'); // Debug log
-          });
-        }
-        // Log that setup is complete
-        console.log('Image upload setup complete');
-      }
+        recognition.addEventListener('error', () => {
+          dispatch('ASK_ERROR');
+        });
 
-      // Move setupImageUpload() call to after DOM is fully loaded
-      document.addEventListener('DOMContentLoaded', () => {
-        console.log('DOM loaded, initializing image upload...'); // Debug log
-        setupImageUpload();
-      });
-
-      // Keep the existing call as well for redundancy
-      setupImageUpload();
-
-      function convertToBase64(file) {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const base64String = reader.result;
-            resolve(base64String);
-          };
-          reader.onerror = (error) => {
-            console.error('Error reading file:', error);
-            reject(error);
-          };
-          reader.readAsDataURL(file);
+        recognition.addEventListener('end', () => {
+          if (uiState === 'listening') dispatch('STOP');
         });
       }
 
-      async function getBotResponse(text, imageFileName = null) {
-        try {
-          console.log('Image File Name:', imageFileName);
-          console.log('Text:', text);
-          const apiUrl = API_CONFIG.endpoint + encodeURIComponent(imageFileName) + "/" + encodeURIComponent(text);
-          console.log('API URL:', apiUrl);
-          
-          if (!imageFileName) {
-            // Fallback to default responses only for text messages
-            text = text.toLowerCase();
-            for (const [key, responses] of Object.entries(botResponses)) {
-              if (text.includes(key)) {
-                return responses[Math.floor(Math.random() * responses.length)];
-              }
-            }
-            return botResponses.default[Math.floor(Math.random() * botResponses.default.length)];
-          }
-          else {
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-              }
-            });
-
-            const data = await response.json();
-            console.log('API Response:', data["description"]);
-            
-            if (!response.ok) {
-              const errorData = await response.text();
-              console.error('API Error Response:', errorData);
-                throw new Error(`API request failed: ${response.status} ${response.statusText}`);
-            }
-            return data["description"];
-          }
-        } catch (error) {
-          console.error('API Error:', error);
-          throw error;
-        }
-      }
-
-      function addMessage(text, isUser = false, imageUrl = null) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-        
-        if (imageUrl && isUser) {
-          messageDiv.classList.add('message-with-image');
-          const img = document.createElement('img');
-          img.src = imageUrl;
-          img.className = 'uploaded-image';
-          messageDiv.appendChild(document.createTextNode(text));
-          messageDiv.appendChild(img);
-        } else {
-          messageDiv.textContent = text;
-        }
-        
-        chatMessages.appendChild(messageDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-
-        // Play text-to-speech for bot messages
-        if (!isUser) {
-          playTextToSpeech(text);
-        }
-      }
-
-      // Add text-to-speech function
-      let currentAudio = null; // Track current audio element
-      let audioWatchdog = null; // interval that frees the mic if playback hangs
-      const AUDIO_STALL_MS = 8000;
-
-      function clearAudioWatchdog() {
-        if (audioWatchdog) {
-          clearInterval(audioWatchdog);
-          audioWatchdog = null;
-        }
-      }
-
-      function playTextToSpeech(text) {
-        // Detach the old audio first so its listeners (guarded by identity)
-        // cannot unmute the mic after we mute it for the new audio.
-        const old = currentAudio;
-        currentAudio = null;
-        clearAudioWatchdog();
-        if (old) {
-          old.pause();
-          old.currentTime = 0;
-        }
-
-        const audio = new Audio(`/speech/${encodeURIComponent(text)}`);
-        currentAudio = audio;
-        const isCurrent = () => audio === currentAudio;
-
-        // Mute the mic while the bot speaks so it does not hear itself,
-        // and turn it back on afterwards if it was on before.
-        muteMic();
-
-        // Playback is over (or failed): forget the audio and hand the mic back
-        const release = () => {
-          if (!isCurrent()) return;
-          currentAudio = null;
-          clearAudioWatchdog();
-          unmuteMic();
-        };
-
-        // Watchdog: a hung stream may never fire ended/error. If the clip is
-        // meant to be playing but currentTime has not moved for AUDIO_STALL_MS,
-        // take the same path as 'error' so the mic is restored.
-        let lastProgressAt = Date.now();
-        let lastTime = audio.currentTime;
-        const markProgress = () => {
-          lastProgressAt = Date.now();
-          lastTime = audio.currentTime;
-        };
-        audio.addEventListener('timeupdate', () => {
-          if (audio.currentTime !== lastTime) markProgress();
-        });
-        audio.addEventListener('play', markProgress);
-        audio.addEventListener('playing', markProgress);
-        clearAudioWatchdog();
-        audioWatchdog = setInterval(() => {
-          if (!isCurrent()) {
-            clearAudioWatchdog();
-            return;
-          }
-          // A user pause (spacebar) is not a stall; do not count it
-          if (audio.paused) {
-            markProgress();
-            return;
-          }
-          if (Date.now() - lastProgressAt >= AUDIO_STALL_MS) {
-            console.warn('Audio made no progress, releasing mic');
-            release();
-          }
-        }, 1000);
-
-        audio.play().catch(error => {
-          // A pause (spacebar) while play() is still pending rejects the promise
-          // with AbortError. The audio is still ours and can be resumed, so keep it.
-          if (error && error.name === 'AbortError' && isCurrent() && audio.paused) {
-            return;
-          }
-          console.error('Error playing audio:', error);
-          release();
-        });
-
-        audio.addEventListener('ended', release);
-        audio.addEventListener('error', release);
-        audio.addEventListener('abort', release);
-
-        // No 'stalled' handler: buffered audio may still be playing while the
-        // network stalls, so the mic stays muted until ended/error/abort/pause.
-
-        // Pausing (spacebar) hands the mic back; resuming mutes it again
-        audio.addEventListener('pause', () => { if (isCurrent()) unmuteMic(); });
-        audio.addEventListener('play', () => { if (isCurrent()) muteMic(); });
-        audio.addEventListener('playing', () => { if (isCurrent()) muteMic(); });
-      }
-
-      let resumeMicAfterAudio = false;
-      let micMuted = false;      // true while the bot's audio is playing
-      let startPending = false;  // start requested but 'start' callback not fired yet
-      let abortedByMute = false; // our own muteMic abort; its async 'aborted' error is expected
-
-      let startTimer = null;
-      function clearStartTimer() {
-        if (startTimer) {
-          clearTimeout(startTimer);
-          startTimer = null;
-        }
-      }
-
-      function startListening(isRetry) {
-        startPending = true;
-        clearStartTimer();
-        // annyang can swallow a start() that follows a quick abort; if the
-        // 'start' callback never fires, clear the flag and retry once.
-        startTimer = setTimeout(() => {
-          startTimer = null;
-          if (!startPending) return;
-          startPending = false;
-          if (!isRetry && !micMuted && !isListening) {
-            startListening(true);
-          } else if (!isListening) {
-            status.textContent = 'Click the microphone to start speaking';
-            micButton.style.backgroundColor = '#007bff';
-          }
-        }, 1500);
-        try {
-          annyang.start({ autoRestart: true, continuous: true });
-        } catch (error) {
-          startPending = false;
-          clearStartTimer();
-          console.error('Error starting recognition:', error);
-          status.textContent = 'Error starting recognition. Please try again.';
-        }
-      }
-
-      function stopListening() {
-        isListening = false;
-        startPending = false;
-        clearStartTimer();
-        annyang.abort();
-        status.textContent = 'Click the microphone to start speaking';
-        micButton.style.backgroundColor = '#007bff';
-      }
-
-      function muteMic() {
-        micMuted = true;
-        // Also covers the startup window where isListening is not yet true
-        if (isListening || startPending) {
-          resumeMicAfterAudio = true;
-          abortedByMute = true;
-          stopListening();
-        }
-      }
-
-      function unmuteMic() {
-        micMuted = false;
-        if (resumeMicAfterAudio) {
-          resumeMicAfterAudio = false;
-          if (!isListening && !startPending) {
-            startListening();
-          }
-        }
-      }
-
-      // Add spacebar event listener for pause/resume
-      document.addEventListener('keydown', (event) => {
-        if (event.code === 'Space' && currentAudio) {
-          event.preventDefault(); // Prevent page scroll
-          if (currentAudio.paused) {
-            const resumed = currentAudio;
-            resumed.play().catch(error => {
-              // Interrupted resume (e.g. paused again): leave the audio in place
-              if (!error || error.name !== 'AbortError') {
-                console.error('Error resuming audio:', error);
-              }
-            });
-          } else {
-            currentAudio.pause();
-          }
-        }
-      });
-
-      function showTypingIndicator() {
-        console.log('Showing typing indicator');
-        typingIndicator.style.display = 'block';
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-      }
-
-      function hideTypingIndicator() {
-        console.log('Hiding typing indicator');
-        typingIndicator.style.display = 'none';
-      }
-
-      // Configure annyang
-      annyang.debug(true);
-      annyang.setLanguage('en-US');
-      
-      // Handle the result
-      annyang.addCallback('result', async function(phrases) {
-        console.log('Got phrases:', phrases);
-        if (phrases.length > 0) {
-          const userMessage = phrases[0];
-          addMessage(userMessage, true, null);
-          
-          showTypingIndicator();
-          try {
-            const botResponse = await getBotResponse(userMessage, imageFileName);
-            addMessage(botResponse, false);
-          } catch (error) {
-            console.error('Error getting bot response:', error);
-            addMessage("I'm sorry, I'm having trouble responding right now. Please try again.", false);
-          }
-          hideTypingIndicator();
-        }
-      });
-
-      // Handle start event
-      annyang.addCallback('start', function() {
-        console.log('Recognition started');
-        abortedByMute = false;
-        startPending = false;
-        clearStartTimer();
-        if (micMuted) {
-          // Started while the bot is speaking: switch off again, resume afterwards
-          resumeMicAfterAudio = true;
-          stopListening();
-          return;
-        }
-        isListening = true;
-        status.textContent = 'Listening...';
-        micButton.style.backgroundColor = '#28a745';
-      });
-
-      // Handle end event
-      annyang.addCallback('end', function() {
-        console.log('Recognition ended');
-        if (isListening) {
-          console.log('Attempting to restart...');
-          annyang.start({ autoRestart: true, continuous: true });
-        } else {
-          status.textContent = 'Click the microphone to start speaking';
-          micButton.style.backgroundColor = '#007bff';
-        }
-      });
-
-      // Handle error event
-      annyang.addCallback('error', function(err) {
-        if (abortedByMute) {
-          abortedByMute = false;
-          if (err && err.error === 'aborted') {
-            // Our own abort from muteMic: do not cancel a retry timer or
-            // pending start that unmuteMic may already have scheduled.
-            console.log('Ignoring aborted error from muteMic');
-            return;
-          }
-        }
-        console.error('Recognition error:', err);
-        isListening = false;
-        startPending = false;
-        clearStartTimer();
-        status.textContent = `Error: ${err.error}`;
-        micButton.style.backgroundColor = '#007bff';
-      });
-
-      // Handle soundstart event
-      annyang.addCallback('soundstart', function() {
-        console.log('Detected sound');
-        status.textContent = 'Hearing speech...';
-      });
-
-      // Start/Stop recognition on button click
       micButton.addEventListener('click', () => {
-        console.log('Button clicked, current state:', isListening);
-        if (isListening || startPending) {
-          console.log('Stopping recognition');
-          resumeMicAfterAudio = false; // a manual stop must stay stopped
-          stopListening();
-        } else if (micMuted) {
-          // Bot is speaking: toggle whether the mic comes back when it finishes
-          resumeMicAfterAudio = !resumeMicAfterAudio;
-          status.textContent = resumeMicAfterAudio
-            ? 'Mic will turn on when the reply finishes'
-            : 'Click the microphone to start speaking';
-        } else {
-          console.log('Starting recognition');
-          startListening();
+        if (uiState === 'listening') {
+          recognition.abort();
+          dispatch('STOP');
+          return;
         }
+        if (!currentImageBlob) {
+          statusEl.textContent = 'Capture a picture first.';
+          return;
+        }
+        dispatch('START_LISTEN');
+        recognition.start();
       });
 
-      // Initialize annyang
-      console.log('Initializing annyang...');
-      annyang.init();
+      // --- Text-input fallback: same askQuestion() path as voice ---
+      textForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const question = textQuestion.value.trim();
+        if (!question) return;
+        if (!currentImageBlob) {
+          statusEl.textContent = 'Capture a picture first.';
+          return;
+        }
+        // Typing and submitting a question while the mic is still
+        // listening must stop the mic first, the same way the Stop button
+        // and the mic button's own "click while listening" case already
+        // do (recognition.abort() + dispatch('STOP')). Without this, the
+        // reducer has no ASK_START transition defined for the 'listening'
+        // state (see state.js), so a bare dispatch('ASK_START') here would
+        // silently no-op and leave uiState stuck on 'listening' while
+        // askQuestion() still runs for the typed question. That leaves a
+        // live recognition in flight that can still deliver a trailing
+        // 'result' event, firing a second, concurrent askQuestion() call
+        // for whatever was spoken, since the result handler only skips
+        // stale results when uiState !== 'listening' and it never left
+        // that state.
+        if (recognition && uiState === 'listening') {
+          recognition.abort();
+          dispatch('STOP');
+        }
+        dispatch('ASK_START');
+        askQuestion(question);
+        textQuestion.value = '';
+      });
 
-      if (currentImageData) {
-        URL.revokeObjectURL(currentImageData);
+      // --- The one path both voice and text funnel into ---
+      async function askQuestion(question) {
+        addMessage(question, true);
+        currentController = new AbortController();
+
+        try {
+          // Reaching this call means the consent overlay was already
+          // accepted (showApp() is the only path that enables capture and
+          // asking), so this request carries consent: true. A direct POST
+          // to /ask that skips this page entirely has no such client
+          // record, which is exactly why the server re-checks consent
+          // itself rather than trusting this flag alone.
+          const { status, body } = await PicChatterAsk.postAsk(
+            window.location.origin,
+            currentImageBlob,
+            'capture.jpg',
+            question,
+            currentController.signal,
+            true,
+            consentFingerprint
+          );
+
+          if (status !== 200 || !body || !body.answer) {
+            dispatch('ASK_ERROR');
+            addMessage((body && body.error) || 'Sorry, something went wrong.', false);
+            return;
+          }
+
+          dispatch('ASK_SUCCESS');
+          addMessage(body.answer.answer, false);
+          speak(body.answer.answer);
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            // The user hit stop; state is already idle from the STOP action.
+            return;
+          }
+          dispatch('ASK_ERROR');
+          addMessage('Sorry, something went wrong reaching the server.', false);
+        } finally {
+          currentController = null;
+        }
       }
 
-    } else {
-      console.error('Annyang is not available');
-      alert('Speech recognition is not supported in this browser. Please try Chrome or Edge.');
-    }
+      // --- Text-to-speech, using the browser's own speechSynthesis ---
+      function speak(text) {
+        if (!('speechSynthesis' in window)) {
+          dispatch('SPEAK_END');
+          return;
+        }
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        currentUtterance = utterance;
+        utterance.addEventListener('end', () => {
+          if (currentUtterance === utterance) {
+            currentUtterance = null;
+            dispatch('SPEAK_END');
+          }
+        });
+        utterance.addEventListener('error', () => {
+          if (currentUtterance === utterance) {
+            currentUtterance = null;
+            dispatch('SPEAK_END');
+          }
+        });
+        window.speechSynthesis.speak(utterance);
+      }
+
+      // --- Stop button: aborts an in-flight ask, cancels speech, and stops listening ---
+      stopButton.addEventListener('click', () => {
+        if (currentController) currentController.abort();
+        if (recognition && uiState === 'listening') recognition.abort();
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        currentUtterance = null;
+        dispatch('STOP');
+      });
+
+      render();
+    }());
   </script>
 </body>
 </html>

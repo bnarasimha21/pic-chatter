@@ -1,43 +1,292 @@
 # PicChatter
 
-A small Express + EJS web app for talking about a picture. You upload an image, speak a question, and the app answers aloud.
+A small Express + EJS app for asking a spoken (or typed) question about a
+picture and getting a grounded, structured answer read back aloud. It talks
+to a pluggable vision provider behind a seam: a deterministic offline fake
+by default, or Anthropic's Claude for real answers.
 
 ## How it works
 
-1. **Upload**: the browser posts the image to `POST /upload` (max 5 MB, enforced by multer). The server streams it to a DigitalOcean Spaces bucket (S3 API, `public-read`) using the original file name as the object key, then deletes the temp file.
-2. **Speech in**: the browser listens with [annyang](https://github.com/TalAter/annyang) (Web Speech API, so Chrome or Edge).
-3. **Answer**: for a text-only message the page picks a canned reply. Once an image is uploaded, the page calls your own describe service at `API_ENDPOINT + <image file name> + "/" + <question>` (both URL-encoded) and expects JSON with a `description` field. That service is not part of this repo.
-4. **Speech out**: replies are read aloud through `GET /speech/:text`, which streams MP3 from `node-gtts` (Google Translate TTS, needs internet). While a reply is playing the microphone is muted so the app does not hear itself, and it is turned back on afterwards if it was on before. Space pauses and resumes playback (pausing also turns the mic back on).
+1. **Capture**: the browser asks for camera permission (after a consent
+   notice, see "Privacy and consent" below) and lets you grab a still frame.
+2. **Ask**: by voice (Web Speech API's `SpeechRecognition`, where supported)
+   or by typing into the text box that is always available as a fallback.
+   Both paths call the exact same client function (`public/js/askClient.js`),
+   so there is no separate "voice request" and "text request" shape to
+   drift apart; see `test/speech-fallback.test.js`.
+3. **Answer**: the server downscales the image if needed, checks it is not
+   near-black or near-uniform, and asks the configured vision provider a
+   single question. The provider is forced to reply through a structured
+   `submit_answer` tool call (`answer`, `confidence`, `visible`,
+   `reason_if_unclear`), never free-form text, so the server always has a
+   safe shape to work with or fall back from.
+4. **Speak**: the answer is read aloud with the browser's own
+   `speechSynthesis`, no server-side TTS and no extra network call.
+
+## Provider seam
+
+`VISION_PROVIDER` selects the implementation (`lib/vision.js` dispatches to
+`lib/vision/<name>.js`):
+
+- `fake` (default): deterministic, offline, makes no network call. Scripted
+  by tests and by the eval runner via `setNextReply()`/`setDelayMs()`. This
+  is also what `npm start` uses if you set nothing at all.
+- `anthropic`: calls the real Claude API (`@anthropic-ai/sdk`) using a
+  forced `tool_choice` so the reply is always the structured shape above.
+  Needs `ANTHROPIC_API_KEY`. Pricing and image limits in
+  `config/pricing.js` were checked against Anthropic's published docs on
+  2026-11-03.
+
+The system prompt lives in exactly one place, `prompts/ask.md`
+(`test/prompt-location.test.js` greps the rest of the source tree to make
+sure nothing duplicates it). Its rules include never inventing an answer
+for something not visible, never identifying a real person from their
+face, and explicitly declining any instruction smuggled into the question
+field rather than following it (prompt-injection defense; see
+`test/structured.test.js`).
 
 ## Setup
 
 ```bash
 npm install
-```
-
-Create `.env`:
-
-```env
-PORT=3000
-API_ENDPOINT=https://your-describe-service.example.com/describe/   # must end with a slash
-SPACES_ENDPOINT=nyc3.digitaloceanspaces.com
-SPACES_KEY=your_spaces_access_key
-SPACES_SECRET=your_spaces_secret
-SPACES_BUCKET=your_bucket
-```
-
-`API_ENDPOINT` falls back to a placeholder URL if unset. Uploads fail with HTTP 500 if the `SPACES_*` variables are missing.
-
-```bash
+cp .env.example .env   # fill in real values; .env is gitignored
 npm start
 ```
 
-Open http://localhost:3000. `GET /health` returns `OK`.
+With no configuration at all, `VISION_PROVIDER` defaults to `fake`, so
+`npm start` works immediately with zero keys and zero network access. Open
+http://localhost:3000.
 
-## Notes
+To use the real provider:
 
-- Uploaded files are keyed by their original file name, so two files with the same name overwrite each other in the bucket.
-- `/uploads` is served statically, but nothing in the app writes there; multer uses a temporary `PicChatter/` folder.
+```env
+VISION_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_key
+```
+
+## Testing
+
+```bash
+npm test           # node --test, the real app on an OS-assigned port, fake provider
+npm run test:e2e   # Playwright; SpeechRecognition/speechSynthesis/getUserMedia are stubbed
+```
+
+Everything except the few things that genuinely need a real browser
+(`test/e2e/flow.spec.js`) runs through Node's built-in test runner against
+the real Express app and a real HTTP request, not an isolated unit mock.
+CI (`.github/workflows/ci.yml`) runs the suite on Node 20 and 22, and a
+separate browser job runs the Playwright tests on Node 22.
+
+## Privacy and consent (issue 2)
+
+- The page shows a consent notice before the camera or microphone are ever
+  requested (`public/js/consent.js`, wired into `views/index.ejs`).
+  Declining leaves the camera and mic untouched. The notice names the real
+  configured vision provider, the current on/off state of image storage,
+  and (when storage is on) the actual retention window in minutes, all
+  read live from the server rather than hardcoded in the page.
+- Consent is recorded against a fingerprint of those facts, not a bare
+  flag. If the server config changes afterwards (storage switched on,
+  provider swapped, retention window changed), the stored consent no
+  longer matches and the notice is shown again. A "Withdraw consent"
+  button is also available once the notice has been accepted; it stops
+  the camera, clears the recorded consent, and re-shows the notice.
+- The server independently checks a `consent` field sent on every `/ask`
+  request and only stores the image when that field says consent was
+  given; a direct API call that skips this page entirely has no client
+  consent record, so the server's own check is the only thing that gates
+  storage in that case, not anything the client claims.
+- The server also checks that the request's `consentFingerprint` field
+  matches the server's own current fingerprint (provider, storage on/off,
+  retention window), not just the bare `consent` flag: a browser tab left
+  open from before the server config changed would otherwise keep sending
+  `consent: true` under a fingerprint the operator-facing notice never
+  actually showed. A mismatch is treated the same as no consent at all for
+  storage purposes.
+  - This fingerprint check only ever gated storage, by design, the same
+    as the bare `consent` flag above: the vision call itself (answering
+    the question about the photo) is this app's core function and always
+    runs regardless of consent or fingerprint match, once a photo has been
+    captured client-side. A tab that is stale with respect to a provider
+    swap will keep sending photos to the new provider without the page
+    re-showing the notice until it is reloaded; it will simply never get
+    its photo stored while stale. Gating the vision call itself on a fresh
+    fingerprint match would be a larger behavior change than this fix's
+    scope (closing the storage-consent gap), and was left out rather than
+    folded in silently.
+- Image storage is off by default (`STORE_IMAGES=false`). When turned on,
+  `lib/storage.js` uploads to a DigitalOcean Spaces / S3-compatible bucket
+  under a random key, with no public ACL, and only after the vision call
+  for that image has actually completed successfully, never speculatively
+  in parallel with it.
+- Deletion is scheduled after `STORE_RETENTION_MINUTES` (default 10) via an
+  in-memory timer, but that timer does not survive a process restart,
+  crash, or redeploy within the retention window. A startup sweep
+  (`sweepExpiredOnStartup()`) covers that gap for every object under the
+  `pic-chatter/` prefix: anything already past its retention window is
+  deleted immediately, and anything still inside its retention window gets
+  a brand new timer for whatever time remains, so a photo stored a second
+  before a restart is still deleted at (approximately) its original
+  deadline rather than only on the next startup or the next lifecycle run.
+  A best-effort bucket lifecycle rule (`ensureLifecyclePolicy()`), set on
+  startup, is a second, independent backstop: a coarse, whole-day-granularity
+  rule (S3-compatible lifecycle rules cannot express a 10 minute window)
+  that catches anything that slips through the sweep, e.g. because the
+  bucket was unreachable at every startup since the object was written.
+  Failed deletes are retried with exponential backoff up to a fixed number
+  of attempts. None of this is a guarantee that a photo is deleted within
+  exactly the stated window if the process is down the entire time; it is
+  a guarantee that it is deleted as soon as the process is next running
+  (immediately if its window had already expired, or at the remaining
+  time left in its window if not), plus a same-day backstop if the sweep
+  itself never runs.
+  - Known limitation: every key this app writes lives under the
+    `pic-chatter/` prefix, and the startup sweep and lifecycle rule are
+    both scoped to that prefix so neither can ever touch objects this app
+    did not write on a bucket shared with anything else. See "What the
+    bucket prefix covers, and what it does not" below for what this means
+    for any pre-existing objects from an older deployment.
+- **What the bucket prefix covers, and what it does not.** An earlier
+  version of this app's storage code (on `main`, before the `pic-chatter/`
+  prefix existed) wrote `req.file.originalname` as the raw S3 key with
+  `ACL: 'public-read'`, i.e. an unprefixed, publicly readable object per
+  upload. The current code (described above) never does this: every key
+  goes under `pic-chatter/`, is a random UUID rather than the client's
+  filename, and is written with no ACL (private by default on S3 and DO
+  Spaces). The startup sweep and the lifecycle rule are scoped to that
+  prefix, so both fully cover everything this app writes going forward.
+  They cannot see, and will never touch, any object written under the old
+  unprefixed scheme, because that object's key does not start with
+  `pic-chatter/`.
+  Whether that old code path was ever actually run against a real bucket
+  with real credentials cannot be determined from the code or git history
+  alone: this repo's history shows the old unprefixed, public-read code
+  existed on `main` and a commit titled "Fix deployment issue" suggests
+  the app was deployed somewhere, but there is no deployment config,
+  CI/CD workflow, or committed credential reference in this repo that
+  confirms the storage path specifically (as opposed to the rest of the
+  app) was ever exercised against a real production bucket. There is no
+  `STORE_IMAGES` flag on `main`: that flag, and the ability to turn
+  storage off, only exist in this branch's rewrite. The old `server.js`
+  uploaded every image unconditionally, as part of the main image flow,
+  with no setting to disable it. So the real condition is: if the old
+  version of this app was ever run with `SPACES_*`/real credentials
+  configured, that bucket needs a one-time manual check for pre-prefix
+  objects, regardless of any `STORE_IMAGES` setting (which did not exist
+  for that version to set). Those old keys are not a generated UUID or
+  any other synthetic identifier; the old code only ever used
+  `req.file.originalname`, the client-supplied filename, as the S3 key.
+  So the pre-prefix objects to look for are exactly the original
+  filenames of whatever was uploaded, sitting at the bucket root; no code
+  in this repo, including the sweep and lifecycle rule above, can find or
+  clean those up.
+- Per-IP rate limiting (`express-rate-limit`) and a rolling-window daily
+  call cap (`lib/rateLimit.js`) protect the real vision provider from
+  abuse; both are env-configured, not hardcoded.
+- Server logs record size, mime type (as actually detected from the image
+  bytes, not the client-declared `Content-Type`), duration, status, and
+  provider name, never the image bytes or the question text.
+
+## Grounding eval (issue 3)
+
+`eval/` is a small, from-scratch evaluation harness, not a benchmark
+library. It measures three outcomes separately, not one pass/fail number:
+
+| Metric | What it measures |
+|---|---|
+| Grounded accuracy | correct answers to questions about things actually in the picture |
+| Hallucination rate | confidently answering "yes" to an absent-object probe (POPE-style, Li et al. 2023) |
+| Abstention rate | correctly saying "I can't tell" to a question the picture cannot answer |
+
+Images (`eval/images/`) are generated from fixed SVG strings
+(`eval/make_images.js`), so ground truth is exact by construction and the
+same seed always produces the same bytes (`eval/images.sha256.json`,
+checked by `test/eval-images.test.js`). They are simple shapes, text, and
+counts, not photographs, and the report says so.
+
+```bash
+npm run eval                                  # fake provider, no network, no keys
+node eval/run.js --provider anthropic --yes   # real provider; prints a cost estimate and refuses without --yes
+```
+
+`test/eval.test.js` runs the real eval against the real `/ask` route inside
+`node --test` and asserts the generated report contains every metric.
+`.github/workflows/eval.yml` runs the fake eval on every PR, failing the
+build if `eval/budgets.json`'s latency/token budgets are exceeded, and
+offers a manual `workflow_dispatch` run against the real provider.
+
+## Structured answers (issue 4)
+
+Every answer is validated against `lib/answerSchema.js`'s shape before it
+reaches the client. An invalid, truncated, or refused provider reply never
+crashes the request or leaks raw provider text: it falls back to a fixed
+safe answer (`fallbackAnswer()`) and is logged with a reason, not silently
+swallowed. See `test/structured.test.js` for the invalid/truncated/refused
+cases, the all-black-frame short-circuit (the provider is never called),
+the sentence-boundary truncation of over-length answers, and the
+prompt-injection test described above.
+
+## Voice and text UI (issue 5)
+
+Speech input is feature-detected (`window.SpeechRecognition` or
+`window.webkitSpeechRecognition`); when it is missing, the mic button
+stays hidden and the always-available text box is the only path in, not a
+degraded one. A stop button is wired to an `AbortController` that cancels
+the in-flight `fetch`, stops active speech recognition, and cancels
+speech synthesis, all at once.
+
+All stateful UI logic lives in a framework-free reducer
+(`public/js/state.js`), unit-tested directly in Node (`test/reducer.test.js`)
+with no DOM needed. The only part that genuinely needs a real browser is
+covered by Playwright (`test/e2e/flow.spec.js`), which stubs
+`SpeechRecognition`, `speechSynthesis`, and `getUserMedia` and drives the
+real page end to end, including the stop button aborting a slow request.
+
+## Latency and cost (issue 6)
+
+Every `/ask` response carries a `Server-Timing` header and a matching
+`timing` object in the JSON body (`lib/timing.js`), with marks for
+`received`, `preprocess_done`, `provider_first_byte`, `provider_done`, and
+`response_sent`. `usage.cost` is computed strictly from `config/pricing.js`
+(never hardcoded in the route) and is `null`, not a silent zero, for any
+model that is not in that file.
+
+Images are downscaled to `IMAGE_MAX_DIM` (default 1092px longest side,
+matching Claude's documented standard image tier) before they reach the
+provider or storage, since both latency and input-token cost scale with
+image size (`lib/imagePrep.js`, `test/imagePrep.test.js`).
+
+`eval/budgets.json` sets a p95 server-time budget and a max-tokens-per-answer
+budget; `eval/budgets.js`'s `checkBudgets()` fails CI if either is
+exceeded. The fake provider supports an injected artificial delay
+(`setDelayMs()`) specifically so this failure path is itself testable
+without waiting on real network latency; see `test/budgets.test.js`.
+
+## Known residual
+
+- `npm audit` reports advisories that trace only to dev-only tooling
+  (`nodemon`, used by `npm run dev`), never to a dependency on the
+  production start path or the test path. Fixing it would require a
+  breaking downgrade of a dev convenience tool with no production
+  exposure, so it has been left as is.
+- The committed image hash test (`test/eval-images.test.js`) compares exact
+  bytes produced by `eval/make_images.js`. If a CI runner ever renders SVG
+  to PNG with a different font-rendering stack than the one the hashes
+  were committed with, that test could fail on CI without any real bug;
+  this is a watch item, not something fixed here.
+- `eval/budgets.js`'s latency/cost budget test reads values that are
+  hardcoded in the test itself rather than loaded from `eval/budgets.json`,
+  so the two can drift. Also, `.github/workflows/eval.yml` only runs the
+  eval on pull requests, not on pushes to `main`, so a budget regression
+  introduced by a direct push would not be caught by CI.
+- There is no `app.set('trust proxy', ...)` configured, so if this app is
+  ever deployed behind a single reverse proxy, every request arrives from
+  that proxy's address as far as `express-rate-limit` and the daily cap
+  are concerned, and all real clients behind it share one rate-limit
+  bucket. The daily cap also counts rejected requests (400 for a bad
+  upload, 415 for an unsupported type) against the same cap as successful
+  calls. Neither is fixed here; both should be addressed before any real
+  deployment behind a proxy.
 
 ## License
 

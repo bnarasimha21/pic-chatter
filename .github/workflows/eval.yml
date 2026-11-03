@@ -1,0 +1,58 @@
+name: Eval
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Vision provider to run the eval against"
+        required: true
+        default: fake
+        type: choice
+        options:
+          - fake
+          - anthropic
+
+jobs:
+  fake-eval:
+    # Runs on every PR: the fake provider, no network, no keys. Also
+    # enforces the latency/cost budgets in eval/budgets.json (issue 6);
+    # node eval/run.js exits non-zero if a budget is exceeded.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the eval against the fake provider
+        run: node eval/run.js --provider fake
+      - name: Upload eval report
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-fake
+          path: eval/results/
+
+  real-eval:
+    # Manual only: costs real money and needs a real key. Never runs on a
+    # PR from a fork or automatically on push.
+    if: github.event_name == 'workflow_dispatch' && inputs.provider == 'anthropic'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the eval against the real anthropic provider
+        run: node eval/run.js --provider anthropic --yes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Upload eval report
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-anthropic
+          path: eval/results/
