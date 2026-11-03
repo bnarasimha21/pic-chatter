@@ -80,4 +80,57 @@ test('issue 1: POST /ask', async (t) => {
     const body = await res.json();
     assert.match(body.error, /provider/i);
   });
+
+  await t.test('issue review fix: a client disconnecting mid-call actually aborts the in-flight vision call', async () => {
+    // The pre-fix code attached its abort listener to req.on('close') after
+    // an await, by which point multer had already fully buffered the
+    // upload; a disconnect after that point was never observed, so the
+    // vision call ran (and billed) to completion regardless. A long
+    // artificial delay here keeps the fake provider's call in flight long
+    // enough to prove the abort actually reaches it, not just that the
+    // client-side fetch rejects.
+    fakeVision.reset();
+    fakeVision.setDelayMs(500);
+
+    const controller = new AbortController();
+    const form = imageForm(path.join(FIXTURE_DIR, 'sample.jpg'), 'what is this?');
+
+    const fetchPromise = fetch(`${app.baseUrl}/ask`, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal
+    });
+
+    // Give the request time to reach the server and start the (500ms)
+    // vision call, then disconnect before it would otherwise finish.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    controller.abort();
+
+    await assert.rejects(fetchPromise);
+
+    // Wait past the delay window so the fake provider's call would have
+    // completed by now if the abort had not actually reached it.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    assert.equal(fakeVision.getAbortCount(), 1, 'the fake provider should have observed exactly one aborted call');
+    assert.equal(fakeVision.getCallCount(), 0, 'an aborted call must never count as a completed one');
+
+    fakeVision.setDelayMs(0);
+  });
+
+  await t.test('issue review fix: a real JPEG declared as image/png by the browser still reaches the provider correctly labelled', async () => {
+    // The browser's declared Content-Type can be wrong (e.g. a stale blob
+    // mime type) even when the bytes decode fine. The pre-fix code passed
+    // req.file.mimetype straight through to the provider whenever no
+    // resize happened, so a real JPEG declared as image/png would reach
+    // Anthropic mislabeled and get rejected. The fix detects the real
+    // format from the bytes via sharp and uses that instead.
+    fakeVision.reset();
+    const form = imageForm(path.join(FIXTURE_DIR, 'sample.jpg'), 'what is this?', 'image', 'image/png');
+    const res = await fetch(`${app.baseUrl}/ask`, { method: 'POST', body: form });
+    assert.equal(res.status, 200, 'a real image should not be rejected just because the declared mime was wrong');
+
+    const lastRequest = fakeVision.getLastRequest();
+    assert.equal(lastRequest.mime, 'image/jpeg', 'the provider must see the detected format, not the client-declared one');
+  });
 });

@@ -46,7 +46,9 @@ function asyncHandler(fn) {
 
 app.get('/', (req, res) => {
   res.render('index', {
-    visionProvider: vision.resolveProviderName()
+    visionProvider: vision.resolveProviderName(),
+    storeImages: storage.isEnabled(),
+    retentionMinutes: storage.getRetentionMinutes()
   });
 });
 
@@ -65,9 +67,32 @@ const upload = multer({
   }
 });
 
+const perIpLimiter = createPerIpLimiter();
+
+// Attaches the abort controller and wires it to the response's 'close'
+// event as the very first thing in the middleware chain, before multer
+// (or anything else) has a chance to await. By the time an async route
+// handler runs, multer has already fully buffered the multipart body, so
+// the request stream has already ended; attaching a 'close' listener to
+// `req` at that point attaches after the event may already have fired and
+// it never fires again. `res.on('close')` is the event Node/Express
+// actually documents for "the underlying connection was terminated before
+// the response completed" (https://nodejs.org/api/http.html#event-close_1),
+// and it fires on a real client disconnect regardless of how much of the
+// request body has already been read, so it is attached here, first.
+function attachAbortController(req, res, next) {
+  const controller = new AbortController();
+  req.visionAbortController = controller;
+  res.on('close', () => {
+    if (!res.writableEnded) controller.abort();
+  });
+  next();
+}
+
 app.post(
   '/ask',
-  createPerIpLimiter(),
+  attachAbortController,
+  perIpLimiter,
   createDailyCap(),
   upload.single('image'),
   asyncHandler(async (req, res) => {
@@ -86,8 +111,17 @@ app.post(
       return res.status(400).json({ error: `Question is too long (max ${MAX_QUESTION_LENGTH} characters)` });
     }
 
+    // Server-side consent check (issue 2/4): a client-side localStorage flag
+    // only gates the browser's own UI. A direct POST to /ask (curl, a
+    // script, a replayed request) never touches that UI, so without this
+    // check it would bypass consent entirely whenever storage is on.
+    const consentGiven = (req.body.consent || '').toString().trim() === 'true';
+
     // The declared Content-Type can lie (a text file renamed to .jpg); the
-    // real format comes from sniffing the bytes.
+    // real format comes from sniffing the bytes. This detected format, not
+    // the client-declared mime, is what gets sent on to the vision provider
+    // below, since a mismatched declared type (e.g. a real JPEG posted as
+    // image/png) would otherwise reach Anthropic mislabeled and be rejected.
     let metadata;
     try {
       metadata = await sharp(req.file.buffer).metadata();
@@ -97,11 +131,9 @@ app.post(
     if (!ALLOWED_FORMATS.has(metadata.format)) {
       return res.status(415).json({ error: 'Unsupported image type' });
     }
+    const detectedMime = `image/${metadata.format}`;
 
-    const controller = new AbortController();
-    req.on('close', () => {
-      if (!res.writableEnded) controller.abort();
-    });
+    const controller = req.visionAbortController;
 
     const frame = await checkFrame(req.file.buffer);
     timer.mark('preprocess_done');
@@ -112,27 +144,33 @@ app.post(
     let providerName = 'none';
     let status = 200;
     let schemaValid = true;
+    let storedImage = null;
 
     if (!frame.usable) {
       finalAnswer = fallbackAnswer(frame.reason);
       finalAnswer.answer = frame.reason === 'too_dark'
         ? "I can't see anything in this picture. Try pointing the camera somewhere brighter."
-        : "This picture looks too plain or blurry to say anything useful about. Try a clearer shot.";
+        : frame.reason === 'too_large'
+          ? 'This picture is too large to process. Try a smaller image.'
+          : "This picture looks too plain or blurry to say anything useful about. Try a clearer shot.";
       schemaValid = false;
       timer.mark('provider_first_byte');
       timer.mark('provider_done');
     } else {
-      const prep = await downscaleIfNeeded(req.file.buffer, req.file.mimetype);
+      const prep = await downscaleIfNeeded(req.file.buffer, detectedMime);
 
       let visionResult;
       try {
-        const [result] = await Promise.all([
-          vision.describe({ imageBytes: prep.buffer, mime: prep.mime, question, signal: controller.signal }),
-          storage.maybeStore({ buffer: prep.buffer, mime: prep.mime }).catch(() => null)
-        ]);
-        visionResult = result;
+        visionResult = await vision.describe({ imageBytes: prep.buffer, mime: prep.mime, question, signal: controller.signal });
       } catch (err) {
-        if (err.name === 'AbortError') {
+        // Checking the signal itself, rather than matching the error's
+        // name/type, is what makes this work for every provider: the fake
+        // provider throws an error named "AbortError", but the real
+        // Anthropic SDK rejects with its own APIUserAbortError, which has a
+        // different name and does not satisfy `err.name === 'AbortError'`.
+        // Both cases are only reachable by the signal actually having
+        // fired, so that is the one condition this checks.
+        if (controller.signal.aborted) {
           // The client disconnected; there is nobody to answer.
           return;
         }
@@ -157,6 +195,27 @@ app.post(
       } else {
         finalAnswer = { ...visionResult.answer };
       }
+
+      // Storage only runs after a successful, completed, schema-valid
+      // vision call (issue 2/3): not in parallel with the vision call,
+      // which previously uploaded a photo even when the call failed or the
+      // client had already disconnected. It also requires the `consent`
+      // field sent with this exact request, so a direct API POST that
+      // skips the browser's consent UI entirely no longer gets stored.
+      if (schemaValid && consentGiven && storage.isEnabled() && !controller.signal.aborted) {
+        try {
+          const stored = await storage.maybeStore({ buffer: prep.buffer, mime: prep.mime });
+          if (stored) {
+            storedImage = { url: stored.url, expiresAt: stored.expiresAt };
+          }
+        } catch (err) {
+          // Never let a storage failure fail the user's request, but do
+          // not swallow it silently either (the pre-fix code did, via a
+          // bare `.catch(() => null)`). No image bytes or question text in
+          // this log line, consistent with lib/logger.js's rule.
+          console.warn(`[ask] storage failed for a captured image: ${err.message}`);
+        }
+      }
     }
 
     finalAnswer.answer = truncateAtSentence(finalAnswer.answer, MAX_ANSWER_LENGTH);
@@ -171,7 +230,8 @@ app.post(
       model,
       usage: usage ? { ...usage, cost } : null,
       timing: timer.toJSON(),
-      schemaValid
+      schemaValid,
+      storedImage
     };
 
     res.set('Server-Timing', timer.toServerTimingHeader());
@@ -213,6 +273,22 @@ if (require.main === module) {
     process.exit(1);
   }
 
+  // Self-heal on restart (issue 2): if the process crashed, was redeployed,
+  // or was simply restarted while a stored photo was still inside its
+  // retention window, nothing before this would ever delete it, because
+  // the only thing driving deletion was an in-memory timer that dies with
+  // the process. This sweep runs once at startup and deletes anything
+  // already older than the retention window. It is fire-and-forget: a
+  // failure here must not block the server from starting.
+  if (storage.isEnabled()) {
+    storage.sweepExpiredOnStartup().catch((err) => {
+      console.warn('Startup storage sweep failed:', err.message);
+    });
+    storage.ensureLifecyclePolicy().catch((err) => {
+      console.warn('Could not set a bucket lifecycle backstop (this is a best-effort extra, not the primary deletion path):', err.message);
+    });
+  }
+
   server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT} (VISION_PROVIDER=${vision.resolveProviderName()})`);
   });
@@ -228,4 +304,4 @@ if (require.main === module) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { app };
+module.exports = { app, perIpLimiter };
