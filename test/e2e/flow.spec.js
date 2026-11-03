@@ -266,3 +266,62 @@ test('issue review fix: a trailing speech result delivered after abort() is defe
   await expect(page.locator('#chatLog .message.user')).toHaveCount(0);
   await expect(page.locator('#chatLog .message.bot')).toHaveCount(0);
 });
+
+test('third adversarial review fix: typing and submitting a question while the mic is listening does not also fire the mic\'s question', async ({ page }) => {
+  // Reproduces the exact race from the third review: press mic, type a
+  // question, press Enter (submit the text form) while still listening,
+  // then the mic's own recognizer still has a result in flight. Before
+  // the fix, the text form's submit handler dispatched ASK_START directly;
+  // the reducer has no transition for ASK_START from 'listening' (see
+  // state.js), so uiState silently stayed 'listening' forever. That meant
+  // (a) the earlier abort()-vs-stop() guard (uiState !== 'listening') never
+  // kicked in, so a trailing speech result could still reach askQuestion(),
+  // and (b) two concurrent requests fired for two different questions.
+  //
+  // The fix makes the text form abort() the live recognition and dispatch
+  // STOP (leaving 'listening') before starting the typed question, exactly
+  // like the mic button's own "click while listening" case already does.
+  // window.__abortStillFiresResult simulates a non-Chrome engine whose
+  // abort() still delivers a trailing result asynchronously, to prove the
+  // fix holds even in that case: by the time it arrives, uiState is no
+  // longer 'listening' (it is 'asking', from the typed question), so the
+  // result handler's own guard discards it.
+  fakeVision.reset();
+  await page.addInitScript(() => {
+    window.__suppressAutoResult = true;
+    window.__abortStillFiresResult = true;
+    window.__fakeTranscript = 'is there a dog here?';
+  });
+  await stubBrowserApis(page);
+  await page.goto(baseUrl);
+
+  await page.click('#consentAccept');
+  await page.waitForFunction(() => document.getElementById('cameraPreview').videoWidth > 0);
+  await page.click('#captureButton');
+  await expect(page.locator('#capturedPreview')).toBeVisible();
+
+  // Start listening with the mic. __suppressAutoResult means no automatic
+  // result fires, so the mic is left genuinely "still listening".
+  await page.click('#micButton');
+  await expect(page.locator('#status')).toHaveText(/Listening/);
+
+  // Type a different question and submit it while the mic is still live.
+  await page.fill('#textQuestion', 'what color is the shape?');
+  await page.click('#textSubmit');
+
+  // The typed question's answer should come back; wait for it.
+  await expect(page.locator('#chatLog .message.bot')).toBeVisible({ timeout: 5000 });
+
+  // The stubbed abort() fires its trailing (mic-dictated) result ~10ms
+  // later; wait well past that, and past the typed question's own answer,
+  // before asserting the mic's question never also fired.
+  await page.waitForTimeout(300);
+
+  const userMessages = await page.locator('#chatLog .message.user').allTextContents();
+  expect(userMessages).toEqual(['what color is the shape?']);
+  await expect(page.locator('#chatLog .message.bot')).toHaveCount(1);
+  expect(fakeVision.getCallCount()).toBe(1);
+
+  const abortedCount = await page.evaluate(() => window.__fakeRecognitionAborted || 0);
+  expect(abortedCount).toBeGreaterThan(0);
+});

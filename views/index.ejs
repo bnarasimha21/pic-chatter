@@ -437,6 +437,23 @@
           statusEl.textContent = 'Capture a picture first.';
           return;
         }
+        // Typing and submitting a question while the mic is still
+        // listening must stop the mic first, the same way the Stop button
+        // and the mic button's own "click while listening" case already
+        // do (recognition.abort() + dispatch('STOP')). Without this, the
+        // reducer has no ASK_START transition defined for the 'listening'
+        // state (see state.js), so a bare dispatch('ASK_START') here would
+        // silently no-op and leave uiState stuck on 'listening' while
+        // askQuestion() still runs for the typed question. That leaves a
+        // live recognition in flight that can still deliver a trailing
+        // 'result' event, firing a second, concurrent askQuestion() call
+        // for whatever was spoken, since the result handler only skips
+        // stale results when uiState !== 'listening' and it never left
+        // that state.
+        if (recognition && uiState === 'listening') {
+          recognition.abort();
+          dispatch('STOP');
+        }
         dispatch('ASK_START');
         askQuestion(question);
         textQuestion.value = '';
