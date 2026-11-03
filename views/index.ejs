@@ -116,9 +116,21 @@
       <h2>Before we start</h2>
       <p>
         PicChatter sends the picture you capture, and the question you ask
-        about it, to a vision model so it can answer. If image storage is
-        enabled on this server, the picture is kept only briefly and then
-        deleted automatically; see the readme for the exact retention window.
+        about it, to <strong><%= visionProvider %></strong> so it can
+        answer.
+      </p>
+      <p>
+        <% if (storeImages) { %>
+          Image storage is currently <strong>on</strong> for this server:
+          the picture is kept for about <strong><%= retentionMinutes %>
+          minute<%= retentionMinutes === 1 ? '' : 's' %></strong> and then
+          deleted. See the readme for exactly what that deletion does and
+          does not guarantee.
+        <% } else { %>
+          Image storage is currently <strong>off</strong> for this server:
+          the picture goes to the vision provider and is not saved
+          anywhere by this app.
+        <% } %>
         Nothing is sent until you capture a picture and ask a question.
       </p>
       <div class="consent-actions">
@@ -139,6 +151,7 @@
       <button id="captureButton">Capture picture</button>
       <button id="micButton" style="display:none;">Ask by voice</button>
       <button id="stopButton" disabled>Stop</button>
+      <button id="withdrawConsentButton" style="background:#aaa;color:white;">Withdraw consent</button>
     </div>
 
     <form class="text-fallback" id="textForm">
@@ -170,6 +183,19 @@
       const textForm = document.getElementById('textForm');
       const textQuestion = document.getElementById('textQuestion');
       const chatLog = document.getElementById('chatLog');
+      const withdrawConsentButton = document.getElementById('withdrawConsentButton');
+
+      // Built from the server-rendered facts the consent notice actually
+      // showed, so a stored consent only counts for exactly those facts.
+      // If the server config changes (provider swapped, storage toggled),
+      // this fingerprint changes too and the stored consent no longer
+      // matches, so the notice is shown again instead of silently carrying
+      // over consent given to a different setup.
+      const consentFingerprint = Consent.buildFingerprint({
+        provider: '<%= visionProvider %>',
+        storeImages: <%= storeImages ? 'true' : 'false' %>,
+        retentionMinutes: <%= Number(retentionMinutes) || 0 %>
+      });
 
       let uiState = PicChatterState.INITIAL_STATE;
       let currentImageBlob = null;
@@ -208,7 +234,7 @@
       // --- Consent gate ---
       function hasConsent() {
         try {
-          return Consent.hasConsented(window.localStorage);
+          return Consent.hasConsented(window.localStorage, consentFingerprint);
         } catch (err) {
           return false;
         }
@@ -222,6 +248,14 @@
         render();
       }
 
+      function stopCameraTracks() {
+        const stream = cameraPreview.srcObject;
+        if (stream && typeof stream.getTracks === 'function') {
+          stream.getTracks().forEach((track) => track.stop());
+        }
+        cameraPreview.srcObject = null;
+      }
+
       if (hasConsent()) {
         showApp();
       } else {
@@ -229,12 +263,25 @@
       }
 
       consentAccept.addEventListener('click', () => {
-        Consent.recordConsent(window.localStorage);
+        Consent.recordConsent(window.localStorage, consentFingerprint);
         showApp();
       });
 
       consentDecline.addEventListener('click', () => {
         statusEl.textContent = 'Camera and microphone access are needed to use PicChatter.';
+      });
+
+      // --- Withdraw consent: stop everything and re-show the notice ---
+      withdrawConsentButton.addEventListener('click', () => {
+        if (currentController) currentController.abort();
+        if (recognition && uiState === 'listening') recognition.stop();
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        currentUtterance = null;
+        stopCameraTracks();
+        Consent.clearConsent(window.localStorage);
+        appEl.classList.add('hidden');
+        consentOverlay.classList.remove('hidden');
+        dispatch('STOP');
       });
 
       // --- Camera capture ---
@@ -321,12 +368,19 @@
         currentController = new AbortController();
 
         try {
+          // Reaching this call means the consent overlay was already
+          // accepted (showApp() is the only path that enables capture and
+          // asking), so this request carries consent: true. A direct POST
+          // to /ask that skips this page entirely has no such client
+          // record, which is exactly why the server re-checks consent
+          // itself rather than trusting this flag alone.
           const { status, body } = await PicChatterAsk.postAsk(
             window.location.origin,
             currentImageBlob,
             'capture.jpg',
             question,
-            currentController.signal
+            currentController.signal,
+            true
           );
 
           if (status !== 200 || !body || !body.answer) {
