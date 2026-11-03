@@ -79,19 +79,47 @@ separate browser job runs the Playwright tests on Node 22.
 
 ## Privacy and consent (issue 2)
 
-- The page shows a one-time consent notice before the camera or microphone
-  are ever requested (`public/js/consent.js`, wired into `views/index.ejs`).
-  Declining leaves the camera and mic untouched.
+- The page shows a consent notice before the camera or microphone are ever
+  requested (`public/js/consent.js`, wired into `views/index.ejs`).
+  Declining leaves the camera and mic untouched. The notice names the real
+  configured vision provider, the current on/off state of image storage,
+  and (when storage is on) the actual retention window in minutes, all
+  read live from the server rather than hardcoded in the page.
+- Consent is recorded against a fingerprint of those facts, not a bare
+  flag. If the server config changes afterwards (storage switched on,
+  provider swapped, retention window changed), the stored consent no
+  longer matches and the notice is shown again. A "Withdraw consent"
+  button is also available once the notice has been accepted; it stops
+  the camera, clears the recorded consent, and re-shows the notice.
+- The server independently checks a `consent` field sent on every `/ask`
+  request and only stores the image when that field says consent was
+  given; a direct API call that skips this page entirely has no client
+  consent record, so the server's own check is the only thing that gates
+  storage in that case, not anything the client claims.
 - Image storage is off by default (`STORE_IMAGES=false`). When turned on,
   `lib/storage.js` uploads to a DigitalOcean Spaces / S3-compatible bucket
-  under a random key, with no public ACL, and schedules a real deletion
-  after `STORE_RETENTION_MINUTES` (default 10) rather than just documenting
-  the intent to delete it later.
+  under a random key, with no public ACL, and only after the vision call
+  for that image has actually completed successfully, never speculatively
+  in parallel with it.
+- Deletion is scheduled after `STORE_RETENTION_MINUTES` (default 10) via an
+  in-memory timer, but that timer does not survive a process restart,
+  crash, or redeploy within the retention window. Two more layers back it
+  up: a startup sweep (`sweepExpiredOnStartup()`) that deletes anything
+  already past its retention window as soon as the process comes back up,
+  and a best-effort bucket lifecycle rule (`ensureLifecyclePolicy()`) set
+  on startup as a coarse, whole-day-granularity backstop (S3-compatible
+  lifecycle rules cannot express a 10 minute window). Failed deletes are
+  retried with exponential backoff up to a fixed number of attempts. None
+  of this is a guarantee that a photo is deleted within exactly the stated
+  window if the process is down the entire time; it is a guarantee that it
+  is deleted as soon as the process is next running, plus a same-day
+  backstop if it is not.
 - Per-IP rate limiting (`express-rate-limit`) and a rolling-window daily
   call cap (`lib/rateLimit.js`) protect the real vision provider from
   abuse; both are env-configured, not hardcoded.
-- Server logs record size, mime type, duration, status, and provider name,
-  never the image bytes or the question text.
+- Server logs record size, mime type (as actually detected from the image
+  bytes, not the client-declared `Content-Type`), duration, status, and
+  provider name, never the image bytes or the question text.
 
 ## Grounding eval (issue 3)
 
@@ -175,6 +203,24 @@ without waiting on real network latency; see `test/budgets.test.js`.
   production start path or the test path. Fixing it would require a
   breaking downgrade of a dev convenience tool with no production
   exposure, so it has been left as is.
+- The committed image hash test (`test/eval-images.test.js`) compares exact
+  bytes produced by `eval/make_images.js`. If a CI runner ever renders SVG
+  to PNG with a different font-rendering stack than the one the hashes
+  were committed with, that test could fail on CI without any real bug;
+  this is a watch item, not something fixed here.
+- `eval/budgets.js`'s latency/cost budget test reads values that are
+  hardcoded in the test itself rather than loaded from `eval/budgets.json`,
+  so the two can drift. Also, `.github/workflows/eval.yml` only runs the
+  eval on pull requests, not on pushes to `main`, so a budget regression
+  introduced by a direct push would not be caught by CI.
+- There is no `app.set('trust proxy', ...)` configured, so if this app is
+  ever deployed behind a single reverse proxy, every request arrives from
+  that proxy's address as far as `express-rate-limit` and the daily cap
+  are concerned, and all real clients behind it share one rate-limit
+  bucket. The daily cap also counts rejected requests (400 for a bad
+  upload, 415 for an unsupported type) against the same cap as successful
+  calls. Neither is fixed here; both should be addressed before any real
+  deployment behind a proxy.
 
 ## License
 
