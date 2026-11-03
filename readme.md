@@ -121,29 +121,56 @@ separate browser job runs the Playwright tests on Node 22.
   in parallel with it.
 - Deletion is scheduled after `STORE_RETENTION_MINUTES` (default 10) via an
   in-memory timer, but that timer does not survive a process restart,
-  crash, or redeploy within the retention window. Two more layers back it
-  up: a startup sweep (`sweepExpiredOnStartup()`) that deletes anything
-  already past its retention window as soon as the process comes back up,
-  and a best-effort bucket lifecycle rule (`ensureLifecyclePolicy()`) set
-  on startup as a coarse, whole-day-granularity backstop (S3-compatible
-  lifecycle rules cannot express a 10 minute window). Failed deletes are
-  retried with exponential backoff up to a fixed number of attempts. None
-  of this is a guarantee that a photo is deleted within exactly the stated
-  window if the process is down the entire time; it is a guarantee that it
-  is deleted as soon as the process is next running, plus a same-day
-  backstop if it is not.
+  crash, or redeploy within the retention window. A startup sweep
+  (`sweepExpiredOnStartup()`) covers that gap for every object under the
+  `pic-chatter/` prefix: anything already past its retention window is
+  deleted immediately, and anything still inside its retention window gets
+  a brand new timer for whatever time remains, so a photo stored a second
+  before a restart is still deleted at (approximately) its original
+  deadline rather than only on the next startup or the next lifecycle run.
+  A best-effort bucket lifecycle rule (`ensureLifecyclePolicy()`), set on
+  startup, is a second, independent backstop: a coarse, whole-day-granularity
+  rule (S3-compatible lifecycle rules cannot express a 10 minute window)
+  that catches anything that slips through the sweep, e.g. because the
+  bucket was unreachable at every startup since the object was written.
+  Failed deletes are retried with exponential backoff up to a fixed number
+  of attempts. None of this is a guarantee that a photo is deleted within
+  exactly the stated window if the process is down the entire time; it is
+  a guarantee that it is deleted as soon as the process is next running
+  (immediately if its window had already expired, or at the remaining
+  time left in its window if not), plus a same-day backstop if the sweep
+  itself never runs.
   - Known limitation: every key this app writes lives under the
     `pic-chatter/` prefix, and the startup sweep and lifecycle rule are
     both scoped to that prefix so neither can ever touch objects this app
-    did not write on a bucket shared with anything else. Any object
-    written by an older version of this app before that prefix existed
-    (a bare `<uuid>.jpg` at the bucket root) is outside that scope and
-    will not be found by the sweep or covered by the lifecycle rule; it
-    would need a one-time manual cleanup on any bucket that had
-    `STORE_IMAGES=true` before this prefix was introduced. No such bucket
-    exists yet as of this fix, so no cleanup was performed, but this must
-    be checked before relying on the prefix-scoped sweep on an
-    already-populated bucket.
+    did not write on a bucket shared with anything else. See "What the
+    bucket prefix covers, and what it does not" below for what this means
+    for any pre-existing objects from an older deployment.
+- **What the bucket prefix covers, and what it does not.** An earlier
+  version of this app's storage code (on `main`, before the `pic-chatter/`
+  prefix existed) wrote `req.file.originalname` as the raw S3 key with
+  `ACL: 'public-read'`, i.e. an unprefixed, publicly readable object per
+  upload. The current code (described above) never does this: every key
+  goes under `pic-chatter/`, is a random UUID rather than the client's
+  filename, and is written with no ACL (private by default on S3 and DO
+  Spaces). The startup sweep and the lifecycle rule are scoped to that
+  prefix, so both fully cover everything this app writes going forward.
+  They cannot see, and will never touch, any object written under the old
+  unprefixed scheme, because that object's key does not start with
+  `pic-chatter/`.
+  Whether that old code path was ever actually run against a real bucket
+  with real credentials cannot be determined from the code or git history
+  alone: this repo's history shows the old unprefixed, public-read code
+  existed on `main` and a commit titled "Fix deployment issue" suggests
+  the app was deployed somewhere, but there is no deployment config,
+  CI/CD workflow, or committed credential reference in this repo that
+  confirms the storage path specifically (as opposed to the rest of the
+  app) was ever exercised against a real production bucket. If this app
+  has ever actually run with `STORE_IMAGES=true` and real `SPACES_*`
+  credentials pointed at a real bucket, that bucket needs a one-time
+  manual check for pre-prefix objects (a bare `<uuid-or-filename>.<ext>`
+  at the bucket root); no code in this repo, including the sweep and
+  lifecycle rule above, can find or clean those up.
 - Per-IP rate limiting (`express-rate-limit`) and a rolling-window daily
   call cap (`lib/rateLimit.js`) protect the real vision provider from
   abuse; both are env-configured, not hardcoded.

@@ -208,6 +208,7 @@ test('issue review fix: sweepExpiredOnStartup deletes anything already past the 
 
   assert.equal(result.scanned, 2);
   assert.equal(result.deleted, 1);
+  assert.equal(result.rescheduled, 1, 'the still-fresh object must get a new deletion timer, not just be left alone');
 
   const deleteCommands = client.calls.filter((c) => commandName(c) === 'DeleteObjectCommand');
   assert.equal(deleteCommands.length, 1);
@@ -215,6 +216,64 @@ test('issue review fix: sweepExpiredOnStartup deletes anything already past the 
 
   const listCommand = client.calls.find((c) => commandName(c) === 'ListObjectsV2Command');
   assert.equal(listCommand.input.Prefix, 'pic-chatter/', 'the sweep must list only this app\'s own key prefix, not the whole bucket');
+
+  delete process.env.STORE_IMAGES;
+  storage.__resetForTests();
+});
+
+test('issue review fix: sweepExpiredOnStartup reschedules a fresh deletion timer for an object still within its retention window, so it still gets deleted after a restart', async () => {
+  // This is the bug from the second adversarial review: the pre-fix sweep
+  // only ever deleted objects that were ALREADY expired at startup. An
+  // object stored a moment before a restart, still well within its
+  // retention window, got no new timer at all (the in-process timer from
+  // the original maybeStore() call died with the old process) and so was
+  // never deleted by anything short of the coarse, whole-day lifecycle
+  // backstop (or never, if that backstop isn't configured). This proves
+  // the sweep now schedules a real deletion for the remaining time left in
+  // the window, not just for objects already past it.
+  process.env.STORE_IMAGES = 'true';
+  // 20ms retention so both "within the window" and "the rescheduled timer
+  // actually firing" can be observed inside a fast test, the same trick
+  // used by the other timer tests in this file.
+  process.env.STORE_RETENTION_MINUTES = String(20 / 60000);
+  storage.__resetForTests();
+
+  const now = Date.now();
+  const freshKey = 'just-stored-before-restart.jpg';
+  const client = makeFakeS3Client();
+  client.send = async (command) => {
+    client.calls.push(command);
+    if (commandName(command) === 'ListObjectsV2Command') {
+      return {
+        // LastModified is "now": fully within the 20ms retention window at
+        // the moment the sweep runs, so this must NOT be deleted
+        // immediately, but DOES need a new timer scheduled for it.
+        Contents: [{ Key: freshKey, LastModified: new Date(now) }],
+        IsTruncated: false
+      };
+    }
+    return {};
+  };
+  storage.__setClientForTests(client);
+
+  const result = await storage.sweepExpiredOnStartup();
+
+  assert.equal(result.deleted, 0, 'an in-window object must not be deleted immediately by the sweep itself');
+  assert.equal(result.rescheduled, 1);
+  assert.equal(
+    client.calls.some((c) => commandName(c) === 'DeleteObjectCommand'),
+    false,
+    'no delete should have fired yet, only been scheduled'
+  );
+
+  // Wait past the rescheduled deadline: the new timer the sweep created
+  // must actually fire and delete the object, proving this isn't just a
+  // bookkeeping counter with no real timer behind it.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  const deleteCommands = client.calls.filter((c) => commandName(c) === 'DeleteObjectCommand');
+  assert.equal(deleteCommands.length, 1, 'the rescheduled timer must actually fire and delete the object');
+  assert.equal(deleteCommands[0].input.Key, freshKey);
 
   delete process.env.STORE_IMAGES;
   storage.__resetForTests();
@@ -269,7 +328,7 @@ test('issue review fix: sweepExpiredOnStartup is a no-op when storage is disable
 
   const result = await storage.sweepExpiredOnStartup();
 
-  assert.deepEqual(result, { scanned: 0, deleted: 0 });
+  assert.deepEqual(result, { scanned: 0, deleted: 0, rescheduled: 0 });
   assert.equal(client.calls.length, 0, 'storage disabled must never touch the bucket');
 });
 
