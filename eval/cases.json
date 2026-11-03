@@ -1,0 +1,99 @@
+[
+  { "id": "present-1", "type": "present", "image": "shapes.png", "question": "What color is the square?", "groundTruth": "red",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The square is red.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-2", "type": "present", "image": "shapes.png", "question": "What color is the circle?", "groundTruth": "blue",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The circle is blue.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-3", "type": "present", "image": "shapes.png", "question": "What shape is red?", "groundTruth": "square",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The red shape is a square.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-4", "type": "present", "image": "shapes.png", "question": "What color is the background?", "groundTruth": "white",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The background is white.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-5", "type": "present", "image": "sign.png", "question": "What does the sign say?", "groundTruth": "OPEN",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The sign says OPEN.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-6", "type": "present", "image": "circles.png", "question": "How many circles are there?", "groundTruth": "4",
+    "fakeScript": { "type": "valid", "answer": { "answer": "There are 4 circles.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-7", "type": "present", "image": "circles.png", "question": "What color are the circles?", "groundTruth": "green",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The circles are green.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-8", "type": "present", "image": "circles.png", "question": "What shape are the green objects?", "groundTruth": "circle",
+    "fakeScript": { "type": "valid", "answer": { "answer": "They are circles.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-9", "type": "present", "image": "room.png", "question": "Is the room dark or bright?", "groundTruth": "dark",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The room looks dark.", "confidence": "medium", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-10", "type": "present", "image": "texture.png", "question": "What color is this picture mostly?", "groundTruth": "blue",
+    "fakeScript": { "type": "valid", "answer": { "answer": "It is mostly blue.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "absent-1", "type": "absent_probe", "image": "texture.png", "question": "Is there a cat in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, I do not see a cat.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-2", "type": "absent_probe", "image": "texture.png", "question": "Is there a dog in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no dog here.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-3", "type": "absent_probe", "image": "shapes.png", "question": "Is there a bicycle in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no bicycle.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-4", "type": "absent_probe", "image": "shapes.png", "question": "Is there a tree in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, I do not see a tree.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-5", "type": "absent_probe", "image": "sign.png", "question": "Is there a person in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no person visible.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-6", "type": "absent_probe", "image": "sign.png", "question": "Is there a car in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no car.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-7", "type": "absent_probe", "image": "circles.png", "question": "Is there a bird in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no bird.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-8", "type": "absent_probe", "image": "circles.png", "question": "Is there a cup in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, I do not see a cup.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-9", "type": "absent_probe", "image": "room.png", "question": "Is there a book in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, I do not see a book.", "confidence": "medium", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-10", "type": "absent_probe", "image": "room.png", "question": "Is there a cat in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "Yes, there is a cat sitting there.", "confidence": "medium", "visible": true, "reason_if_unclear": null } },
+    "note": "deliberately wrong: this case exercises the hallucination metric" },
+
+  { "id": "unanswerable-1", "type": "unanswerable", "image": "room.png", "question": "What is the person's name?", "groundTruth": "cannot_tell",
+    "fakeScript": { "type": "valid", "answer": { "answer": "I cannot tell from the picture; no person is identifiable here.", "confidence": "low", "visible": false, "reason_if_unclear": "no_person_visible" } } },
+
+  { "id": "unanswerable-2", "type": "unanswerable", "image": "sign.png", "question": "What is written on the back of the sign?", "groundTruth": "cannot_tell",
+    "fakeScript": { "type": "valid", "answer": { "answer": "I cannot tell; the back of the sign is not visible.", "confidence": "low", "visible": false, "reason_if_unclear": "not_visible" } } },
+
+  { "id": "unanswerable-3", "type": "unanswerable", "image": "room.png", "question": "What is the temperature in this room?", "groundTruth": "cannot_tell",
+    "fakeScript": { "type": "valid", "answer": { "answer": "I cannot tell the temperature from a picture.", "confidence": "low", "visible": false, "reason_if_unclear": "not_determinable_from_image" } } },
+
+  { "id": "unanswerable-4", "type": "unanswerable", "image": "shapes.png", "question": "What city was this photo taken in?", "groundTruth": "cannot_tell",
+    "fakeScript": { "type": "valid", "answer": { "answer": "I cannot tell where this was taken from the picture alone.", "confidence": "low", "visible": false, "reason_if_unclear": "not_determinable_from_image" } } },
+
+  { "id": "unanswerable-5", "type": "unanswerable", "image": "circles.png", "question": "What time was this picture taken?", "groundTruth": "cannot_tell",
+    "fakeScript": { "type": "valid", "answer": { "answer": "I cannot tell the time this was taken from the picture.", "confidence": "low", "visible": false, "reason_if_unclear": "not_determinable_from_image" } } },
+
+  { "id": "unanswerable-6", "type": "unanswerable", "image": "texture.png", "question": "What is the person wearing?", "groundTruth": "cannot_tell",
+    "fakeScript": { "type": "valid", "answer": { "answer": "There is a person wearing a blue jacket.", "confidence": "medium", "visible": true, "reason_if_unclear": null } },
+    "note": "deliberately wrong: no person is present, exercises the abstention-miss path" },
+
+  { "id": "position-1", "type": "position", "image": "shapes.png", "question": "Is the red square left of the blue circle?", "groundTruth": "yes",
+    "fakeScript": { "type": "valid", "answer": { "answer": "Yes, the red square is to the left of the blue circle.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "position-2", "type": "position", "image": "shapes.png", "question": "Is the blue circle left of the red square?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, the blue circle is to the right of the red square.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-11", "type": "present", "image": "texture.png", "question": "Is the picture a single solid color or does it have stripes?", "groundTruth": "stripes",
+    "fakeScript": { "type": "valid", "answer": { "answer": "It has horizontal stripes.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "present-12", "type": "present", "image": "sign.png", "question": "What color is the text on the sign?", "groundTruth": "black",
+    "fakeScript": { "type": "valid", "answer": { "answer": "The text is black.", "confidence": "high", "visible": true, "reason_if_unclear": null } } },
+
+  { "id": "absent-11", "type": "absent_probe", "image": "shapes.png", "question": "Is there a clock in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no clock.", "confidence": "high", "visible": false, "reason_if_unclear": null } } },
+
+  { "id": "absent-12", "type": "absent_probe", "image": "circles.png", "question": "Is there a horse in the image?", "groundTruth": "no",
+    "fakeScript": { "type": "valid", "answer": { "answer": "No, there is no horse.", "confidence": "high", "visible": false, "reason_if_unclear": null } } }
+]
