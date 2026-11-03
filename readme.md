@@ -165,12 +165,21 @@ separate browser job runs the Playwright tests on Node 22.
   the app was deployed somewhere, but there is no deployment config,
   CI/CD workflow, or committed credential reference in this repo that
   confirms the storage path specifically (as opposed to the rest of the
-  app) was ever exercised against a real production bucket. If this app
-  has ever actually run with `STORE_IMAGES=true` and real `SPACES_*`
-  credentials pointed at a real bucket, that bucket needs a one-time
-  manual check for pre-prefix objects (a bare `<uuid-or-filename>.<ext>`
-  at the bucket root); no code in this repo, including the sweep and
-  lifecycle rule above, can find or clean those up.
+  app) was ever exercised against a real production bucket. There is no
+  `STORE_IMAGES` flag on `main`: that flag, and the ability to turn
+  storage off, only exist in this branch's rewrite. The old `server.js`
+  uploaded every image unconditionally, as part of the main image flow,
+  with no setting to disable it. So the real condition is: if the old
+  version of this app was ever run with `SPACES_*`/real credentials
+  configured, that bucket needs a one-time manual check for pre-prefix
+  objects, regardless of any `STORE_IMAGES` setting (which did not exist
+  for that version to set). Those old keys are not a generated UUID or
+  any other synthetic identifier; the old code only ever used
+  `req.file.originalname`, the client-supplied filename, as the S3 key.
+  So the pre-prefix objects to look for are exactly the original
+  filenames of whatever was uploaded, sitting at the bucket root; no code
+  in this repo, including the sweep and lifecycle rule above, can find or
+  clean those up.
 - Per-IP rate limiting (`express-rate-limit`) and a rolling-window daily
   call cap (`lib/rateLimit.js`) protect the real vision provider from
   abuse; both are env-configured, not hardcoded.
