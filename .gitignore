@@ -36,3 +36,14 @@ archive/
 uploads/
 
 .env
+
+# Playwright scratch output
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Eval fixture images/reports are regenerated deterministically; the hash
+# manifest (eval/images.sha256.json) is committed so the regeneration can
+# be checked against it, but the generated images and reports are not.
+eval/images/
+eval/results/
