@@ -320,7 +320,7 @@
         // no matter how it interleaves with a later re-consent.
         cameraGeneration++;
         if (currentController) currentController.abort();
-        if (recognition && uiState === 'listening') recognition.stop();
+        if (recognition && uiState === 'listening') recognition.abort();
         if ('speechSynthesis' in window) window.speechSynthesis.cancel();
         currentUtterance = null;
         stopCameraTracks();
@@ -388,6 +388,18 @@
         recognition.interimResults = false;
 
         recognition.addEventListener('result', (event) => {
+          // Defense in depth: real Chrome's SpeechRecognition can deliver a
+          // trailing 'result' event even after .abort() is called (the
+          // engine may already have a result in flight at the moment
+          // abort() is invoked). The app's own state is the source of
+          // truth for whether the user is still actually listening; if
+          // it is not 'listening' anymore (Stop was pressed, or a listen
+          // session already ended for any other reason), this result
+          // belongs to a session the user has already asked to cancel and
+          // must be discarded rather than turned into a captured photo
+          // being sent to the vision provider (and possibly stored)
+          // without the user's consent to that specific submission.
+          if (uiState !== 'listening') return;
           const transcript = event.results[0][0].transcript;
           dispatch('SPEECH_RESULT');
           askQuestion(transcript);
@@ -404,7 +416,7 @@
 
       micButton.addEventListener('click', () => {
         if (uiState === 'listening') {
-          recognition.stop();
+          recognition.abort();
           dispatch('STOP');
           return;
         }
@@ -500,7 +512,7 @@
       // --- Stop button: aborts an in-flight ask, cancels speech, and stops listening ---
       stopButton.addEventListener('click', () => {
         if (currentController) currentController.abort();
-        if (recognition && uiState === 'listening') recognition.stop();
+        if (recognition && uiState === 'listening') recognition.abort();
         if ('speechSynthesis' in window) window.speechSynthesis.cancel();
         currentUtterance = null;
         dispatch('STOP');
