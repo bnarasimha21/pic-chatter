@@ -1,0 +1,5 @@
+{
+  "p95ServerMs": 500,
+  "maxTokensPerAnswer": 600,
+  "notes": "p95ServerMs is calibrated against the fake provider with its default (zero) injected delay, so it only means something for the fake run in CI; it is not compared against real-provider latency."
+}
