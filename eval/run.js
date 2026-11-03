@@ -57,6 +57,20 @@ async function main() {
   }
 
   const sizes = values.sizes ? values.sizes.split(',').map((s) => Number(s.trim())) : [Number(process.env.IMAGE_MAX_DIM || 1092)];
+  if (sizes.length > 1) {
+    // Known limitation: every eval/images/*.png fixture is <=320px on its
+    // longest side (see eval/make_images.js), so no --sizes value at or
+    // above ~320 can show an actual size difference; every size in the
+    // comparison downscales to the same "already under the cap" no-op.
+    // lib/imagePrep.js itself is fixed (issue 6) to read IMAGE_MAX_DIM
+    // fresh per call rather than caching it at module load, which is what
+    // let this comparison run multiple sizes in one process at all; a
+    // meaningful size *difference* in the output still needs a fixture
+    // larger than every size being compared (test/fixtures/large.jpg is
+    // one such image, used by test/imagePrep.test.js, but is not part of
+    // this hash-checked eval fixture set).
+    console.log('Note: current eval fixtures are all <=320px; a --sizes comparison below that will show identical results for every size. See eval/run.js.');
+  }
 
   const runsBySize = [];
   for (const maxDim of sizes) {
