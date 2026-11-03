@@ -144,15 +144,18 @@ function negationPrecedesNoun(normalizedText, noun) {
 //    somewhere unrelated to the probed noun) by requiring the negation to
 //    be positioned right before the noun itself, not just present
 //    anywhere in the sentence.
-function classifyAbsentProbeAnswer(response, probedNoun) {
-  const answerText = (response && response.answer) || '';
-
-  if (response && typeof response.visible === 'boolean') {
-    if (response.visible === true) return 'yes';
-    if (isAbstentionText(answerText)) return 'abstained';
-    return 'no';
-  }
-
+// Text-only classification, ignoring any structured `visible` flag
+// entirely. This is the heuristic that decides what the answer's PROSE
+// says, independent of what the response's own flag claims. It exists as
+// its own function (rather than being inlined into
+// classifyAbsentProbeAnswer below) specifically so the agreement metric in
+// score() can run it and compare the result against `visible` -- if this
+// function also trusted `visible`, the agreement check would just be
+// comparing the flag with itself and could never detect a real mismatch
+// between the text and the flag (e.g. "Yes, there is a cat right there."
+// with visible: false must disagree, not silently inherit `false` from the
+// flag it is supposed to be checking).
+function classifyAbsentProbeTextOnly(answerText, probedNoun) {
   if (isAbstentionText(answerText)) return 'abstained';
 
   const text = normalize(answerText);
@@ -169,6 +172,18 @@ function classifyAbsentProbeAnswer(response, probedNoun) {
 
   if (negationPrecedesNoun(text, probedNoun)) return 'no';
   return 'yes';
+}
+
+function classifyAbsentProbeAnswer(response, probedNoun) {
+  const answerText = (response && response.answer) || '';
+
+  if (response && typeof response.visible === 'boolean') {
+    if (response.visible === true) return 'yes';
+    if (isAbstentionText(answerText)) return 'abstained';
+    return 'no';
+  }
+
+  return classifyAbsentProbeTextOnly(answerText, probedNoun);
 }
 
 // scoreCase(testCase, response, meta) scores one case. `response` is the
@@ -251,15 +266,20 @@ function score(cases, responses) {
       if (response.schemaValid) schemaValidCount++;
     }
 
-    // Agreement between the model's own `visible: false` flag and the
-    // absent-object probes' correct answer (issue 4's addition). Skipped
-    // for a fallback response, same reasoning as scoreCase above: a
-    // fallback's visible:false is a forced placeholder, not the model's
-    // own claim, so it cannot "agree" or "disagree" with anything.
+    // Agreement between the model's own `visible: false` flag and an
+    // INDEPENDENT, text-only read of the answer's prose (issue 4's
+    // addition). This must use classifyAbsentProbeTextOnly, not
+    // classifyAbsentProbeAnswer: the latter trusts `visible` when present,
+    // so comparing its output back against `visible` would just compare
+    // the flag with itself and always "agree", no matter what the text
+    // actually says. Skipped for a fallback response, same reasoning as
+    // scoreCase above: a fallback's visible:false is a forced placeholder,
+    // not the model's own claim, so it cannot "agree" or "disagree" with
+    // anything.
     if (type === 'absent_probe' && response.answer && result.fallback !== true) {
       agreementTotal++;
       const probedNoun = extractProbedNoun(testCase.question);
-      const saidNo = classifyAbsentProbeAnswer(response.answer, probedNoun) === 'no';
+      const saidNo = classifyAbsentProbeTextOnly(response.answer.answer, probedNoun) === 'no';
       const visibleFalse = response.answer.visible === false;
       if (saidNo === visibleFalse) agreementCount++;
     }
@@ -298,6 +318,7 @@ module.exports = {
   isAbstention,
   isAbstentionText,
   classifyAbsentProbeAnswer,
+  classifyAbsentProbeTextOnly,
   extractProbedNoun,
   matchesGroundTruth
 };

@@ -9,6 +9,7 @@ const {
   extractYesNo,
   isAbstention,
   classifyAbsentProbeAnswer,
+  classifyAbsentProbeTextOnly,
   extractProbedNoun
 } = require('../eval/score');
 
@@ -249,5 +250,55 @@ test('second adversarial review fix: scoreCase checks the fallback/failure path 
     const metrics = score(cases, responses);
     assert.equal(metrics.fallbackCount, 1);
     assert.equal(metrics.hallucinationRate, 0, 'the single real, scored case denied correctly, and the fallback must not dilute this rate');
+  });
+});
+
+test('third adversarial review fix: the agreement metric must run the text-only heuristic, not compare visible against itself', async (t) => {
+  await t.test('classifyAbsentProbeTextOnly ignores the visible flag entirely and reads only the prose', () => {
+    // Confirms the text-only function is a genuinely independent read of
+    // the text: it must classify "Yes, there is a cat right there." as an
+    // affirmation regardless of what visible says, since it never looks
+    // at visible at all.
+    assert.equal(classifyAbsentProbeTextOnly('Yes, there is a cat right there.', 'cat'), 'yes');
+  });
+
+  await t.test(
+    'exact counterexample from review: "Yes, there is a cat right there." with visible:false must score as disagreement, not 100% agreement',
+    () => {
+      // Before this fix, classifyAbsentProbeAnswer(trusting visible first)
+      // was fed into the agreement check and compared back against
+      // visible itself, so it always matched no matter what the text
+      // said. Four of these replies previously scored 100% agreement and
+      // 0% hallucination; they must now disagree, and must still count as
+      // hallucinated by the ordinary (visible-trusting) classification.
+      const cases = [
+        { type: 'absent_probe', groundTruth: 'no', question: 'Is there a cat in the image?' },
+        { type: 'absent_probe', groundTruth: 'no', question: 'Is there a cat in the image?' },
+        { type: 'absent_probe', groundTruth: 'no', question: 'Is there a cat in the image?' },
+        { type: 'absent_probe', groundTruth: 'no', question: 'Is there a cat in the image?' }
+      ];
+      const responses = cases.map(() => ({
+        answer: { answer: 'Yes, there is a cat right there.', visible: false },
+        schemaValid: true
+      }));
+
+      const metrics = score(cases, responses);
+
+      assert.equal(metrics.absentProbeVisibleAgreement, 0, 'the text affirms the cat while visible says false: this must disagree every time');
+      // hallucinationRate is computed from classifyAbsentProbeAnswer, which
+      // still trusts the structured visible:false flag (the prior round's
+      // intentional, unrelated improvement), so these score as a correct
+      // denial for that metric even though the prose disagrees with the
+      // flag. That disagreement is exactly what absentProbeVisibleAgreement
+      // above exists to surface.
+      assert.equal(metrics.hallucinationRate, 0, 'the ordinary classification used for hallucinationRate still trusts visible:false and is unaffected by this fix');
+    }
+  );
+
+  await t.test('a genuine match between text and visible still agrees', () => {
+    const cases = [{ type: 'absent_probe', groundTruth: 'no', question: 'Is there a cat in the image?' }];
+    const responses = [{ answer: { answer: 'There is no cat here.', visible: false }, schemaValid: true }];
+    const metrics = score(cases, responses);
+    assert.equal(metrics.absentProbeVisibleAgreement, 1);
   });
 });
